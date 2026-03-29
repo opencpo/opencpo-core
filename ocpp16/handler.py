@@ -21,6 +21,7 @@ Known Hongjiali MAXPOWER quirks (from pre-rebuild reference):
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -128,7 +129,7 @@ class ChargePointHandler:
         # Detect simulated charger (by vendor OR known virtual prefix)
         VIRTUAL_PREFIXES = ("STRESS-", "SIM-", "CHAOS-", "VAL-", "LOAD-", "FUZZ-", "FARM-", "PNC-")
         self._simulated = (
-            vendor == "STROOMLIJNEN_TEST"
+            vendor == os.getenv("SIMULATED_VENDOR", "VIRTUAL_CHARGER")
             or any(self.cp_id.startswith(p) for p in VIRTUAL_PREFIXES)
         )
 

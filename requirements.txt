@@ -35,3 +35,6 @@ reportlab>=4.0.0
 
 # OCPI
 # (no external lib — we implement OCPI 2.2.1 directly)
+
+# YAML (charger profiles)
+pyyaml>=6.0

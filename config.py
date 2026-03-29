@@ -32,9 +32,9 @@ class DatabaseConfig:
     @property
     def port(self): return _env_int("PG_PORT", 5432)
     @property
-    def name(self): return _env("PG_NAME", "stroomlijnen")
+    def name(self): return _env("PG_NAME", "ocpp")
     @property
-    def user(self): return _env("PG_USER", "stroomlijnen")
+    def user(self): return _env("PG_USER", "ocpp")
     @property
     def password(self): return _env("PG_PASSWORD", "")
     @property

@@ -4,6 +4,7 @@ OCPI 2.2.1 Sessions module — CPO sender interface.
 EMSPs pull active/completed sessions for their users.
 """
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -38,8 +39,8 @@ async def get_sessions(
     for s in sessions:
         ocpi_status = "ACTIVE" if s["status"] == "active" else "COMPLETED"
         result.append({
-            "country_code": "NL",
-            "party_id": "STM",
+            "country_code": os.getenv("OCPI_COUNTRY_CODE", "XX"),
+            "party_id": os.getenv("OCPI_PARTY_ID", "CPO"),
             "id": str(s["id"]),
             "start_date_time": s["start_time"].isoformat(),
             "end_date_time": s["stop_time"].isoformat() if s["stop_time"] else None,

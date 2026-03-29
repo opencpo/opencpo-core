@@ -10,6 +10,7 @@ Starts all services concurrently:
 """
 import asyncio
 import logging
+import os
 import signal
 import sys
 
@@ -198,9 +199,10 @@ async def main():
         asyncio.create_task(ocpp201_server.serve(), name="ocpp-2.0.1"),
     ]
 
-    # Event consumers
-    from events.consumers import lago_billing
-    tasks.append(asyncio.create_task(lago_billing.run(event_bus), name="lago-billing"))
+    # Event consumers (optional — only start if configured)
+    if os.getenv("LAGO_API_KEY"):
+        from events.consumers import lago_billing
+        tasks.append(asyncio.create_task(lago_billing.run(event_bus), name="lago-billing"))
 
     # REST API (uvicorn)
     api_config = uvicorn.Config(

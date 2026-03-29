@@ -4,6 +4,7 @@ OCPI 2.2.1 Data Models — Pydantic schemas.
 Based on OCPI 2.2.1 specification. Used for API request/response validation
 and for data exchange with roaming partners.
 """
+import os
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -166,8 +167,8 @@ class EVSE(BaseModel):
 
 
 class Location(BaseModel):
-    country_code: str = "NL"
-    party_id: str = "STM"
+    country_code: str = os.getenv("OCPI_COUNTRY_CODE", "XX")
+    party_id: str = os.getenv("OCPI_PARTY_ID", "CPO")
     id: str
     publish: bool = True
     name: Optional[str] = None
@@ -196,8 +197,8 @@ class ChargingPeriod(BaseModel):
 
 
 class Session(BaseModel):
-    country_code: str = "NL"
-    party_id: str = "STM"
+    country_code: str = os.getenv("OCPI_COUNTRY_CODE", "XX")
+    party_id: str = os.getenv("OCPI_PARTY_ID", "CPO")
     id: str
     start_date_time: datetime
     end_date_time: Optional[datetime] = None
@@ -227,8 +228,8 @@ class TariffElement(BaseModel):
 
 
 class Tariff(BaseModel):
-    country_code: str = "NL"
-    party_id: str = "STM"
+    country_code: str = os.getenv("OCPI_COUNTRY_CODE", "XX")
+    party_id: str = os.getenv("OCPI_PARTY_ID", "CPO")
     id: str
     currency: str = "EUR"
     type: Optional[TariffType] = None
@@ -254,8 +255,8 @@ class Token(BaseModel):
 # ── CDRs ─────────────────────────────────────────────────────────────────
 
 class CDR(BaseModel):
-    country_code: str = "NL"
-    party_id: str = "STM"
+    country_code: str = os.getenv("OCPI_COUNTRY_CODE", "XX")
+    party_id: str = os.getenv("OCPI_PARTY_ID", "CPO")
     id: str
     start_date_time: datetime
     end_date_time: datetime

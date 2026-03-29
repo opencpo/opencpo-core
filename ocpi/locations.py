@@ -4,6 +4,7 @@ OCPI 2.2.1 Locations module — CPO sender interface.
 EMSPs pull our charge point locations to display in their apps.
 """
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -53,11 +54,11 @@ async def get_locations(
         for cp in charge_points:
             evses.append({
                 "uid": cp["id"],
-                "evse_id": f"NL*STM*E{cp['id']}*{cp['connector_id']}",
+                "evse_id": f"{os.getenv('OCPI_COUNTRY_CODE', 'XX')}*{os.getenv('OCPI_PARTY_ID', 'CPO')}*E{cp['id']}*{cp['connector_id']}",
                 "status": _map_status(cp["status"]),
                 "connectors": [{
                     "id": str(cp["connector_id"]),
-                    "standard": "IEC_62196_T2_COMBO",  # CCS2 default for our Hongjiali chargers
+                    "standard": "IEC_62196_T2_COMBO",  # Default connector type — override per charge point in DB
                     "format": "CABLE",
                     "power_type": "DC",
                     "max_voltage": 500,
@@ -69,8 +70,8 @@ async def get_locations(
             })
 
         result.append({
-            "country_code": "NL",
-            "party_id": "STM",
+            "country_code": os.getenv("OCPI_COUNTRY_CODE", "XX"),
+            "party_id": os.getenv("OCPI_PARTY_ID", "CPO"),
             "id": loc["id"],
             "publish": True,
             "name": loc["name"],
@@ -105,8 +106,8 @@ async def get_location(country_code: str, party_id: str, location_id: str,
 
     # Build full location object (simplified — would call get_locations logic)
     return ocpi_response({
-        "country_code": "NL",
-        "party_id": "STM",
+        "country_code": os.getenv("OCPI_COUNTRY_CODE", "XX"),
+        "party_id": os.getenv("OCPI_PARTY_ID", "CPO"),
         "id": location_id,
         "name": loc["name"],
         "address": loc["address"],

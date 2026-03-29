@@ -16,6 +16,7 @@ Structure (split per architecture v2):
 - security.py    — SecurityMixin: SignCertificate, Get15118EV, SecurityEvent
 """
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -123,7 +124,7 @@ class ChargePointHandler201(TransactionMixin, MeterMixin, SecurityMixin):
         firmware = cs.get("firmwareVersion", "")
         reason = payload.get("reason", "PowerUp")
 
-        self._simulated = vendor == "STROOMLIJNEN_TEST"
+        self._simulated = vendor == os.getenv("SIMULATED_VENDOR", "VIRTUAL_CHARGER")
 
         async with db.write() as conn:
             await conn.execute("""

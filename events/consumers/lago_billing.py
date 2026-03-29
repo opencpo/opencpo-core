@@ -49,7 +49,7 @@ async def _resolve_subscription(charge_point: str) -> str | None:
         """, charge_point)
 
         if row and row["external_id"]:
-            return f"{row['external_id']}_fleet_001"
+            return f"{row['external_id']}_{os.getenv('LAGO_SUBSCRIPTION_SUFFIX', 'fleet_001')}"
 
     return None
 
