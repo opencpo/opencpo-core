@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  # ── OCPP Core ──────────────────────────────────────────────────────────────
+  ocpp-core:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${OCPP16_PORT:-9100}:9100"    # OCPP 1.6j WebSocket
+      - "${OCPP201_PORT:-9201}:9201"   # OCPP 2.0.1 WebSocket
+      - "${API_PORT:-8000}:8000"       # REST API
+    volumes:
+      - pki-data:/app/data/pki         # PKI certificates (persistent)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── PostgreSQL 16 ──────────────────────────────────────────────────────────
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_NAME:-ocpp}
+      POSTGRES_USER: ${PG_USER:-ocpp}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro  # auto-run on first start
+    ports:
+      - "127.0.0.1:5432:5432"          # Only bind locally
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-ocpp} -d ${PG_NAME:-ocpp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis 7 ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6380:6379"          # Map to 6380 on host (matches default REDIS_PORT)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  postgres-data:
+  redis-data:
+  pki-data:

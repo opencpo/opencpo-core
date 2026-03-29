@@ -1,0 +1,37 @@
+# OCPP Core — Dependencies
+
+# Web framework + API
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+
+# OCPP protocol
+websockets>=14.0
+
+# Database
+asyncpg>=0.30.0
+alembic>=1.14.0
+
+# Redis
+redis[hiredis]>=5.2.0
+
+# PKI / Cryptography
+cryptography>=44.0.0
+
+# Data validation
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# HTTP client (for Tailscale API, OCPI, webhooks)
+httpx>=0.28.0
+
+# Structured logging
+structlog>=24.4.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# PDF generation
+reportlab>=4.0.0
+
+# OCPI
+# (no external lib — we implement OCPI 2.2.1 directly)
