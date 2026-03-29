@@ -158,7 +158,7 @@ class Connector(BaseModel):
 
 class EVSE(BaseModel):
     uid: str
-    evse_id: Optional[str] = None   # e.g., "NL*STM*E001*1"
+    evse_id: Optional[str] = None   # e.g., "XX*CPO*E001*1"
     status: Status
     connectors: list[Connector]
     floor_level: Optional[str] = None

@@ -23,8 +23,8 @@ Open source OCPP 1.6j + 2.0.1 Central System (CSMS) with profile-driven charger 
 
 ```bash
 # Clone
-git clone https://github.com/your-org/ocpp-core.git
-cd ocpp-core
+git clone https://github.com/opencpo/opencpo-core.git
+cd opencpo-core
 
 # Start dependencies (Postgres + Redis)
 docker compose up -d postgres redis
