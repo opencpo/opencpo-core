@@ -58,6 +58,12 @@ _DEFAULTS: dict[str, dict] = {
         "base_url":           "http://localhost:8000",
         "versions_path":      "/ocpi/versions",
     },
+    "tailscale": {
+        "auth_key":  "",
+        "tailnet":   "",
+        "api_key":   "",
+        "enabled":   False,
+    },
 }
 
 VALID_KEYS = set(_DEFAULTS.keys())
