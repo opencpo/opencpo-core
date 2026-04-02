@@ -345,9 +345,12 @@ class UpdateChargerRequest(BaseModel):
     firmware_version: Optional[str] = None
     ocpp_version: Optional[str] = None
     site: Optional[str] = None
+    simulated: Optional[bool] = None
     display_name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     max_power_kw: Optional[float] = None
     tariff_kwh: Optional[float] = None
 
@@ -389,6 +392,7 @@ async def update_charger(cp_id: str, req: UpdateChargerRequest):
             "firmware_version": req.firmware_version,
             "ocpp_version": req.ocpp_version,
             "site": req.site,
+            "simulated": req.simulated,
         }
         sets = []
         params = []
@@ -407,6 +411,10 @@ async def update_charger(cp_id: str, req: UpdateChargerRequest):
             meta_updates["address"] = req.address
         if req.city is not None:
             meta_updates["city"] = req.city
+        if req.latitude is not None:
+            meta_updates["latitude"] = req.latitude
+        if req.longitude is not None:
+            meta_updates["longitude"] = req.longitude
         if req.max_power_kw is not None:
             meta_updates["max_power_kw"] = req.max_power_kw
         if req.tariff_kwh is not None:
