@@ -59,17 +59,22 @@ async def list_chargers(
             SELECT COUNT(*) FROM ocpp.charge_points WHERE {' AND '.join(conditions)}
         """, *params[:-2])
 
-    # Enrich with live Redis state
+    # Enrich with live Redis state and flatten metadata for convenience
     result = []
     for cp in chargers:
         live = await redis_state.get_charger(cp["id"])
-        result.append({
-            **dict(cp),
-            "live": live or {},
-            "last_boot": cp["last_boot"].isoformat() if cp["last_boot"] else None,
-            "last_heartbeat": cp["last_heartbeat"].isoformat() if cp["last_heartbeat"] else None,
-            "registered_at": cp["registered_at"].isoformat(),
-        })
+        data = {**dict(cp)}
+        # Flatten metadata fields to top level for API consumers
+        meta = data.get("metadata") or {}
+        for mk in ("display_name", "address", "city", "latitude", "longitude",
+                    "max_power_kw", "tariff_kwh", "access_type"):
+            if mk not in data:
+                data[mk] = meta.get(mk)
+        data["live"] = live or {}
+        data["last_boot"] = cp["last_boot"].isoformat() if cp["last_boot"] else None
+        data["last_heartbeat"] = cp["last_heartbeat"].isoformat() if cp["last_heartbeat"] else None
+        data["registered_at"] = cp["registered_at"].isoformat()
+        result.append(data)
 
     return {"chargers": result, "total": total, "offset": offset, "limit": limit}
 

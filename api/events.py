@@ -224,19 +224,14 @@ class WebhookResponse(BaseModel):
 @router.post("/webhooks")
 async def create_webhook(webhook: WebhookCreate):
     """Register a webhook endpoint for event delivery."""
-    webhook_id = str(uuid.uuid4())
-
     async with db.write() as conn:
-        await conn.execute("""
-            INSERT INTO admin.settings (key, value)
-            VALUES ($1, $2)
-        """, f"webhook:{webhook_id}", json.dumps({
-            "url": webhook.url,
-            "events": webhook.events,
-            "secret": webhook.secret,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }))
+        row = await conn.fetchrow("""
+            INSERT INTO ocpp.webhook_subscriptions (url, events, secret)
+            VALUES ($1, $2, $3)
+            RETURNING id::text AS id
+        """, webhook.url, webhook.events, webhook.secret)
 
+    webhook_id = row["id"]
     logger.info(f"Webhook registered: {webhook_id} → {webhook.url} events={webhook.events}")
     return {
         "id": webhook_id,
@@ -251,7 +246,7 @@ async def delete_webhook(webhook_id: str):
     """Remove a webhook."""
     async with db.write() as conn:
         result = await conn.execute(
-            "DELETE FROM admin.settings WHERE key = $1", f"webhook:{webhook_id}"
+            "DELETE FROM ocpp.webhook_subscriptions WHERE id = $1::uuid", webhook_id
         )
     if result == "DELETE 0":
         raise HTTPException(404, "Webhook not found")

@@ -50,11 +50,17 @@ async def chargers_nearby(lat: float = 0.0, lng: float = 0.0, radius: float = 50
     async with db.read() as conn:
         rows = await conn.fetch("""
             SELECT id, vendor, model, status,
-                   display_name, address, city,
-                   latitude, longitude, max_power_kw, tariff_kwh
+                   metadata->>'display_name' AS display_name,
+                   metadata->>'address' AS address,
+                   metadata->>'city' AS city,
+                   (metadata->>'latitude')::float AS latitude,
+                   (metadata->>'longitude')::float AS longitude,
+                   (metadata->>'max_power_kw')::float AS max_power_kw,
+                   (metadata->>'tariff_kwh')::float AS tariff_kwh
               FROM ocpp.charge_points
-             WHERE (access_type = 'public' OR access_type IS NULL)
-               AND latitude IS NOT NULL AND longitude IS NOT NULL
+             WHERE (metadata->>'access_type' = 'public' OR metadata->>'access_type' IS NULL)
+               AND metadata->>'latitude' IS NOT NULL
+               AND metadata->>'longitude' IS NOT NULL
                AND simulated = false
              ORDER BY id
         """)
@@ -214,6 +220,23 @@ async def _trigger_remote_start(session_id: str, cp_id: str, connector_id: int) 
         )
 
 
+async def _fail_pending_start(data: dict) -> None:
+    """Mark a pending public session as failed when RemoteStart retries are exhausted."""
+    session_id = data.get("session_id", "")
+    if not session_id:
+        return
+
+    async with db.write() as conn:
+        await conn.execute("""
+            UPDATE ocpp.public_sessions
+               SET payment_status = 'remote_start_failed'
+             WHERE id = $1::uuid
+               AND started_at IS NULL
+        """, session_id)
+
+    logger.warning("Session %s marked as remote_start_failed (retries exhausted)", session_id[:8])
+
+
 # ── Management endpoints for public sessions (API key required) ──────────
 
 mgmt_public_router = APIRouter(tags=["Public Sessions (Management)"])
@@ -228,7 +251,9 @@ async def list_receipt_sessions(limit: int = 100, offset: int = 0):
                    ps.driver_phone, ps.driver_email,
                    ps.kwh_delivered, ps.rate_kwh, ps.started_at, ps.stopped_at,
                    ps.payment_status, ps.pricing_tier,
-                   cp.display_name, cp.address, cp.city
+                   cp.metadata->>'display_name' AS display_name,
+                   cp.metadata->>'address' AS address,
+                   cp.metadata->>'city' AS city
               FROM ocpp.public_sessions ps
               LEFT JOIN ocpp.charge_points cp ON cp.id = ps.cp_id
              WHERE ps.stopped_at IS NOT NULL AND ps.kwh_delivered > 0

@@ -68,15 +68,16 @@ async def list_favorites(request: Request):
     account = await _require_account(request)
     await _ensure_table()
 
-    rows = await db.fetch(
-        """
-        SELECT charge_point_id, created_at
-        FROM ocpp.driver_favorites
-        WHERE driver_account_id = $1
-        ORDER BY created_at DESC
-        """,
-        account["sub"],
-    )
+    async with db.read() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT charge_point_id, created_at
+            FROM ocpp.driver_favorites
+            WHERE driver_account_id = $1::uuid
+            ORDER BY created_at DESC
+            """,
+            account["sub"],
+        )
 
     return {
         "favorites": [

@@ -76,7 +76,7 @@ async def list_groups():
                 count(t.id)                                       AS token_count,
                 count(t.id) FILTER (WHERE t.status = 'active')   AS active_count,
                 coalesce(sum(s.energy_kwh), 0)                    AS month_kwh,
-                coalesce(sum(s.energy_kwh * cp.tariff_kwh), 0)   AS month_cost
+                coalesce(sum(s.energy_kwh * coalesce((cp.metadata->>'tariff_kwh')::float, 0)), 0) AS month_cost
             FROM ocpp.token_groups g
             LEFT JOIN ocpp.tokens t ON t.group_id = g.id
             LEFT JOIN ocpp.sessions s ON s.auth_id = t.uid
@@ -133,7 +133,7 @@ async def get_group(group_id: str):
                 to_char(date_trunc('month', s.start_time), 'YYYY-MM') AS month,
                 count(s.id) AS sessions,
                 coalesce(sum(s.energy_kwh), 0) AS kwh,
-                coalesce(sum(s.energy_kwh * cp.tariff_kwh), 0) AS cost
+                coalesce(sum(s.energy_kwh * coalesce((cp.metadata->>'tariff_kwh')::float, 0)), 0) AS cost
             FROM ocpp.sessions s
             JOIN ocpp.tokens t ON t.uid = s.auth_id AND t.group_id = $1::uuid
             JOIN ocpp.charge_points cp ON cp.id = s.charge_point
@@ -221,7 +221,7 @@ async def get_group_usage(group_id: str, month: str = Query(None)):
                 t.label,
                 count(s.id) AS sessions,
                 coalesce(sum(s.energy_kwh), 0) AS kwh,
-                coalesce(sum(s.energy_kwh * cp.tariff_kwh), 0) AS cost
+                coalesce(sum(s.energy_kwh * coalesce((cp.metadata->>'tariff_kwh')::float, 0)), 0) AS cost
             FROM ocpp.tokens t
             LEFT JOIN ocpp.sessions s ON s.auth_id = t.uid
                 AND date_trunc('month', s.start_time) = date_trunc('month', $2::timestamptz)

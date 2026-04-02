@@ -128,7 +128,7 @@ async def create_session(req: SessionCreate):
         )
         async with db.read() as conn:
             tariff_row = await conn.fetchrow(
-                "SELECT tariff_kwh FROM ocpp.charge_points WHERE id = $1", req.cp_id
+                "SELECT metadata->>'tariff_kwh' AS tariff_kwh FROM ocpp.charge_points WHERE id = $1", req.cp_id
             )
         rate_kwh = float(tariff_row["tariff_kwh"]) if tariff_row and tariff_row["tariff_kwh"] else 0.35
         spot_price_at_start = None

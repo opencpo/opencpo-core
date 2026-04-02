@@ -247,7 +247,9 @@ async def _send_receipt_email(
                 SELECT ps.id::text AS id, ps.cp_id, ps.connector_id,
                        ps.kwh_delivered, ps.rate_kwh, ps.started_at, ps.stopped_at,
                        ps.driver_email, ps.driver_phone,
-                       cp.display_name, cp.address, cp.city
+                       cp.metadata->>'display_name' AS display_name,
+                       cp.metadata->>'address' AS address,
+                       cp.metadata->>'city' AS city
                   FROM ocpp.public_sessions ps
                   LEFT JOIN ocpp.charge_points cp ON cp.id = ps.cp_id
                  WHERE ps.id = $1::uuid
