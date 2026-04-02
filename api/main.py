@@ -97,6 +97,7 @@ from api.profiles import router as profiles_router
 from api.pricing import router as pricing_router
 from api.cert_setup import router as cert_setup_router
 from api.settings import router as settings_router
+from api.ocpi_management import router as ocpi_mgmt_router
 from api.api_key_auth import management_auth
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
@@ -132,6 +133,7 @@ app.include_router(webhook_router)         # Payment webhook: POST /api/payments
 
 app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"], dependencies=_mgmt)
 app.include_router(settings_router, dependencies=_mgmt)
+app.include_router(ocpi_mgmt_router, prefix="/api/v1/ocpi", tags=["OCPI Management"], dependencies=_mgmt)
 
 # Pricing — /current is public; /config and /tiers management auth is handled per-route in pricing.py
 app.include_router(pricing_router)
