@@ -16,7 +16,6 @@ from state.redis import redis_state
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 @router.get("")
 async def list_chargers(
     status: str = Query(None, description="Filter: online/offline"),
@@ -74,7 +73,6 @@ async def list_chargers(
 
     return {"chargers": result, "total": total, "offset": offset, "limit": limit}
 
-
 @router.get("/{cp_id}")
 async def get_charger(cp_id: str):
     """Get a specific charge point with connectors and live state."""
@@ -96,7 +94,6 @@ async def get_charger(cp_id: str):
         "connectors": [dict(c) for c in connectors],
         "live": live or {},
     }
-
 
 @router.get("/{cp_id}/meter-values")
 async def charger_meter_values(
@@ -141,7 +138,6 @@ async def charger_meter_values(
             ]
 
     return {"charge_point": cp_id, "connectors": result}
-
 
 @router.get("/{cp_id}/sessions")
 async def charger_sessions(
@@ -190,19 +186,16 @@ async def charger_sessions(
 
     return {"sessions": result}
 
-
 # ── Remote Commands ──────────────────────────────────────────────────────
 
 class RemoteStartRequest(BaseModel):
     connector_id: int = 1
     id_tag: str = ""
 
-
 class ChargingProfileRequest(BaseModel):
     connector_id: int = 0
     limit_kw: float
     duration_seconds: int = 0
-
 
 @router.post("/{cp_id}/start", dependencies=[Depends(management_auth)])
 async def remote_start(cp_id: str, req: RemoteStartRequest):
@@ -218,7 +211,6 @@ async def remote_start(cp_id: str, req: RemoteStartRequest):
         raise HTTPException(502, f"Failed to send RemoteStartTransaction to {cp_id}")
 
     return {"status": "Accepted", "charge_point": cp_id, "msg_id": msg_id}
-
 
 @router.post("/{cp_id}/stop", dependencies=[Depends(management_auth)])
 async def remote_stop(cp_id: str, transaction_id: int = Query(None), connector_id: int = Query(None)):
@@ -251,7 +243,6 @@ async def remote_stop(cp_id: str, transaction_id: int = Query(None), connector_i
 
     return {"status": "Accepted", "charge_point": cp_id, "transaction_id": transaction_id, "msg_id": msg_id}
 
-
 @router.post("/{cp_id}/reset", dependencies=[Depends(management_auth)])
 async def reset_charger(cp_id: str, reset_type: str = Query("Soft")):
     """Send Reset command to a charger."""
@@ -268,7 +259,6 @@ async def reset_charger(cp_id: str, reset_type: str = Query("Soft")):
         raise HTTPException(502, f"Failed to send Reset to {cp_id}")
 
     return {"status": "Accepted", "charge_point": cp_id, "type": reset_type, "msg_id": msg_id}
-
 
 @router.post("/{cp_id}/profile", dependencies=[Depends(management_auth)])
 async def set_charging_profile(cp_id: str, req: ChargingProfileRequest):
@@ -306,11 +296,9 @@ async def set_charging_profile(cp_id: str, req: ChargingProfileRequest):
 
     return {"status": "Accepted", "charge_point": cp_id, "limit_kw": req.limit_kw, "msg_id": msg_id}
 
-
 class GenericCommandRequest(BaseModel):
     action: str
     payload: dict = {}
-
 
 @router.post("/{cp_id}/command", dependencies=[Depends(management_auth)])
 async def send_generic_command(cp_id: str, req: GenericCommandRequest):
@@ -326,9 +314,7 @@ async def send_generic_command(cp_id: str, req: GenericCommandRequest):
 
     return {"status": "Accepted", "charge_point": cp_id, "action": req.action, "msg_id": msg_id}
 
-
 # ── CRUD ──────────────────────────────────────────────────────────────────
-
 
 class CreateChargerRequest(BaseModel):
     id: str
@@ -338,7 +324,6 @@ class CreateChargerRequest(BaseModel):
     ocpp_version: str = "1.6"
     site: str = ""
     simulated: bool = False
-
 
 class UpdateChargerRequest(BaseModel):
     vendor: Optional[str] = None
@@ -352,7 +337,6 @@ class UpdateChargerRequest(BaseModel):
     city: Optional[str] = None
     max_power_kw: Optional[float] = None
     tariff_kwh: Optional[float] = None
-
 
 @router.post("", dependencies=[Depends(management_auth)])
 async def create_charger(req: CreateChargerRequest):
@@ -373,7 +357,6 @@ async def create_charger(req: CreateChargerRequest):
 
     logger.info(f"Created charge point: {req.id} simulated={req.simulated}")
     return {"id": req.id, "status": "created"}
-
 
 @router.put("/{cp_id}", dependencies=[Depends(management_auth)])
 async def update_charger(cp_id: str, req: UpdateChargerRequest):
@@ -434,7 +417,6 @@ async def update_charger(cp_id: str, req: UpdateChargerRequest):
     logger.info(f"Updated charge point: {cp_id}")
     return {"id": cp_id, "status": "updated"}
 
-
 @router.delete("/{cp_id}", dependencies=[Depends(management_auth)])
 async def delete_charger(cp_id: str):
     """Delete a charge point and all its data (connectors, sessions, meter values)."""
@@ -463,7 +445,6 @@ async def delete_charger(cp_id: str):
 
     logger.info(f"Deleted charge point: {cp_id}")
     return {"id": cp_id, "status": "deleted"}
-
 
 @router.delete("", dependencies=[Depends(management_auth)])
 async def bulk_delete_chargers(simulated: bool = Query(True)):

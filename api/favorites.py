@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/public/account/favorites", tags=["favorites"])
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "stroomlijnen-jwt-2026")
+JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
 JWT_ALGO = "HS256"
 
 # ── DB setup ──────────────────────────────────────────────────────────────
@@ -51,13 +51,13 @@ async def _require_account(request: Request) -> dict:
     """Extract and verify JWT from Authorization header."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
-        raise HTTPException(401, "Niet ingelogd")
+        raise HTTPException(401, "Not authenticated")
     try:
         return jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGO])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Sessie verlopen — log opnieuw in")
+        raise HTTPException(401, "Session expired — please log in again")
     except jwt.InvalidTokenError:
-        raise HTTPException(401, "Ongeldige sessie")
+        raise HTTPException(401, "Invalid session token")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 """
 Fleet Vehicles API endpoints.
 
-CRUD for commercial.fleet_vehicles.
+CRUD for ocpp.fleet_vehicles.
 Replaces direct-DB access in the client portal (routes/vehicles.py).
 
-Table: commercial.fleet_vehicles
+Table: ocpp.fleet_vehicles
 Columns inferred from portal usage:
   id              SERIAL PRIMARY KEY
   license_plate   TEXT NOT NULL UNIQUE
@@ -79,14 +79,14 @@ async def list_vehicles(
         rows = await conn.fetch(f"""
             SELECT id, license_plate, make, model, connector_type, status,
                    pnc_cert_serial, pnc_cert_status, last_session_at, created_at
-            FROM commercial.fleet_vehicles
+            FROM ocpp.fleet_vehicles
             WHERE {' AND '.join(conditions)}
             ORDER BY status, license_plate
             OFFSET ${idx} LIMIT ${idx + 1}
         """, *params)
 
         total = await conn.fetchval(f"""
-            SELECT COUNT(*) FROM commercial.fleet_vehicles WHERE {' AND '.join(conditions)}
+            SELECT COUNT(*) FROM ocpp.fleet_vehicles WHERE {' AND '.join(conditions)}
         """, *params[:-2])
 
     vehicles = []
@@ -104,7 +104,7 @@ async def get_vehicle(vehicle_id: int):
     """Get a single fleet vehicle by ID."""
     async with db.read() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM commercial.fleet_vehicles WHERE id = $1", vehicle_id
+            "SELECT * FROM ocpp.fleet_vehicles WHERE id = $1", vehicle_id
         )
     if not row:
         raise HTTPException(404, f"Vehicle {vehicle_id} not found")
@@ -126,14 +126,14 @@ async def create_vehicle(req: CreateVehicleRequest):
 
     async with db.write() as conn:
         existing = await conn.fetchval(
-            "SELECT id FROM commercial.fleet_vehicles WHERE UPPER(license_plate) = $1",
+            "SELECT id FROM ocpp.fleet_vehicles WHERE UPPER(license_plate) = $1",
             license_plate,
         )
         if existing:
             raise HTTPException(409, f"Vehicle with license plate {license_plate} already exists")
 
         row = await conn.fetchrow("""
-            INSERT INTO commercial.fleet_vehicles
+            INSERT INTO ocpp.fleet_vehicles
                 (license_plate, make, model, connector_type, status, pnc_cert_serial, pnc_cert_status)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id, license_plate, status, created_at
@@ -159,7 +159,7 @@ async def patch_vehicle(vehicle_id: int, req: PatchVehicleRequest):
 
     async with db.write() as conn:
         existing = await conn.fetchval(
-            "SELECT id FROM commercial.fleet_vehicles WHERE id = $1", vehicle_id
+            "SELECT id FROM ocpp.fleet_vehicles WHERE id = $1", vehicle_id
         )
         if not existing:
             raise HTTPException(404, f"Vehicle {vehicle_id} not found")
@@ -193,7 +193,7 @@ async def patch_vehicle(vehicle_id: int, req: PatchVehicleRequest):
 
         params.append(vehicle_id)
         await conn.execute(
-            f"UPDATE commercial.fleet_vehicles SET {', '.join(sets)} WHERE id = ${idx}",
+            f"UPDATE ocpp.fleet_vehicles SET {', '.join(sets)} WHERE id = ${idx}",
             *params,
         )
 
@@ -206,13 +206,13 @@ async def delete_vehicle(vehicle_id: int):
     """Soft-delete a fleet vehicle (sets status to 'inactive')."""
     async with db.write() as conn:
         existing = await conn.fetchval(
-            "SELECT id FROM commercial.fleet_vehicles WHERE id = $1", vehicle_id
+            "SELECT id FROM ocpp.fleet_vehicles WHERE id = $1", vehicle_id
         )
         if not existing:
             raise HTTPException(404, f"Vehicle {vehicle_id} not found")
 
         await conn.execute(
-            "UPDATE commercial.fleet_vehicles SET status = 'inactive' WHERE id = $1",
+            "UPDATE ocpp.fleet_vehicles SET status = 'inactive' WHERE id = $1",
             vehicle_id,
         )
 
@@ -229,7 +229,7 @@ async def vehicle_sessions(
     """Last sessions for a vehicle (matched by license plate as auth_id)."""
     async with db.read() as conn:
         vehicle = await conn.fetchrow(
-            "SELECT id, license_plate FROM commercial.fleet_vehicles WHERE id = $1", vehicle_id
+            "SELECT id, license_plate FROM ocpp.fleet_vehicles WHERE id = $1", vehicle_id
         )
         if not vehicle:
             raise HTTPException(404, f"Vehicle {vehicle_id} not found")

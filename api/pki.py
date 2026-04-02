@@ -7,7 +7,6 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from pki.ca import ca
@@ -16,21 +15,17 @@ from pki.ocsp import ocsp_responder
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 class RevokeRequest(BaseModel):
     serial: str
     reason: str = "unspecified"
-
 
 class IssueSeccRequest(BaseModel):
     charge_point_id: str
     csr_pem: Optional[str] = None
 
-
 class IssueContractRequest(BaseModel):
     emaid: str
     csr_pem: Optional[str] = None
-
 
 class IssueUserRequest(BaseModel):
     name: str
@@ -39,19 +34,16 @@ class IssueUserRequest(BaseModel):
     validity_days: int = 365
     cert_format: str = "modern"  # modern | legacy | pem
 
-
 @router.get("/stats")
 async def pki_stats():
     """PKI statistics — active, revoked, expiring certs."""
     return await ca.stats()
-
 
 @router.get("/expiring")
 async def expiring_certs(days: int = 30):
     """List certificates expiring within N days."""
     certs = await ca.get_expiring_certs(days)
     return {"expiring": certs, "days": days}
-
 
 @router.get("/chain/{cert_type}")
 async def cert_chain(cert_type: str):
@@ -60,7 +52,6 @@ async def cert_chain(cert_type: str):
         raise HTTPException(400, "cert_type must be 'secc' or 'contract'")
     chain = await ca.get_cert_chain(cert_type)
     return Response(content=chain, media_type="application/x-pem-file")
-
 
 @router.post("/validate")
 async def validate_cert(request: Request):
@@ -72,7 +63,6 @@ async def validate_cert(request: Request):
         raise HTTPException(400, result)
     return result
 
-
 @router.post("/revoke")
 async def revoke_cert(req: RevokeRequest):
     """Revoke a certificate by serial number."""
@@ -81,11 +71,9 @@ async def revoke_cert(req: RevokeRequest):
         raise HTTPException(404, "Certificate not found or already revoked")
     return {"status": "revoked", "serial": req.serial}
 
-
 class RevokeAccountRequest(BaseModel):
     email: str
     reason: str = "account_revoked"
-
 
 @router.post("/revoke-account")
 async def revoke_account_certs(req: RevokeAccountRequest):
@@ -112,13 +100,11 @@ async def revoke_account_certs(req: RevokeAccountRequest):
     logger.warning("Account revoked: %s — %d certificates", req.email, len(revoked))
     return {"status": "revoked", "email": req.email, "count": len(revoked), "serials": revoked}
 
-
 @router.get("/crl")
 async def get_crl():
     """Download the Certificate Revocation List."""
     crl_pem = await ca.generate_crl()
     return Response(content=crl_pem, media_type="application/x-pem-file")
-
 
 @router.post("/ocsp")
 async def ocsp_endpoint(request: Request):
@@ -126,7 +112,6 @@ async def ocsp_endpoint(request: Request):
     body = await request.body()
     response_der = await ocsp_responder.handle_request(body)
     return Response(content=response_der, media_type="application/ocsp-response")
-
 
 # ── Certificate Listing & Detail ─────────────────────────────────────────
 
@@ -203,7 +188,6 @@ async def list_certificates(
         "pages": (total + limit - 1) // limit if total else 0,
     }
 
-
 @router.get("/certificates/{serial}/download")
 async def download_cert(serial: str):
     """Download certificate bundle — P12/PFX from users/ dir, or PEM fallback from DB."""
@@ -241,7 +225,6 @@ async def download_cert(serial: str):
         headers={"Content-Disposition": f'attachment; filename="cert-{serial[:16]}.pem"'},
     )
 
-
 @router.get("/certificates/{serial}")
 async def get_certificate(serial: str):
     """Get full details for a single certificate."""
@@ -270,7 +253,6 @@ async def get_certificate(serial: str):
             d["status"] = "expired"
 
     return d
-
 
 # ── Certificate Issuance ─────────────────────────────────────────────────
 
@@ -313,7 +295,6 @@ async def issue_secc_cert(req: IssueSeccRequest):
         "auto_generated_key": req.csr_pem is None,
     }
 
-
 @router.post("/issue/contract")
 async def issue_contract_cert(req: IssueContractRequest):
     """Issue a contract (Plug & Charge) certificate."""
@@ -349,7 +330,6 @@ async def issue_contract_cert(req: IssueContractRequest):
         "emaid": req.emaid,
         "cert_pem": cert_pem,
     }
-
 
 @router.post("/issue/user")
 async def issue_user_cert(req: IssueUserRequest):
@@ -421,103 +401,4 @@ async def issue_user_cert(req: IssueUserRequest):
     }
 
 
-# ── Audit Log ────────────────────────────────────────────────────────────
-
-@router.get("/audit-log")
-async def audit_log(
-    type: Optional[str] = Query(None, description="secc, contract, user"),
-    date_from: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
-    date_to: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
-    limit: int = Query(50, ge=1, le=200),
-):
-    """Certificate lifecycle audit log."""
-    from state.postgres import db
-
-    conditions = ["1=1"]
-    args = []
-    idx = 1
-
-    if type:
-        conditions.append(f"c.type = ${idx}")
-        args.append(type)
-        idx += 1
-    if date_from:
-        conditions.append(f"event_time >= ${idx}::timestamptz")
-        args.append(date_from)
-        idx += 1
-    if date_to:
-        conditions.append(f"event_time <= ${idx}::timestamptz + INTERVAL '1 day'")
-        args.append(date_to)
-        idx += 1
-
-    where = " AND ".join(conditions)
-
-    async with db.read() as conn:
-        # Combine issued and revoked events
-        rows = await conn.fetch(f"""
-            SELECT serial, type, subject, charge_point, issued_at AS event_time, 'issued' AS event
-            FROM ocpp.pki_certificates c
-            WHERE {where}
-            UNION ALL
-            SELECT serial, type, subject, charge_point, revoked_at AS event_time,
-                   COALESCE('revoked:' || revocation_reason, 'revoked') AS event
-            FROM ocpp.pki_certificates c
-            WHERE status = 'revoked' AND revoked_at IS NOT NULL AND {where}
-            ORDER BY event_time DESC
-            LIMIT {limit}
-        """, *args)
-
-    events = []
-    for r in rows:
-        d = dict(r)
-        if d.get("event_time") and hasattr(d["event_time"], "isoformat"):
-            d["event_time"] = d["event_time"].isoformat()
-        events.append(d)
-
-    return {"events": events, "total": len(events)}
-
-
-# ── CA Hierarchy ─────────────────────────────────────────────────────────
-
-@router.get("/ca-hierarchy")
-async def ca_hierarchy():
-    """Return CA chain info: root CA → sub-CAs with expiry and fingerprints."""
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.serialization import Encoding
-
-    def cert_info(cert, role: str) -> dict:
-        if cert is None:
-            return {"role": role, "available": False}
-        now = datetime.now(timezone.utc)
-        expiry = cert.not_valid_after_utc
-        days_left = (expiry - now).days
-        status = "active"
-        if days_left < 0:
-            status = "expired"
-        elif days_left < 30:
-            status = "expiring"
-
-        return {
-            "role": role,
-            "cn": cert.subject.get_attributes_for_oid(
-                __import__("cryptography.x509.oid", fromlist=["NameOID"]).NameOID.COMMON_NAME
-            )[0].value,
-            "subject": cert.subject.rfc4514_string(),
-            "issuer": cert.issuer.rfc4514_string(),
-            "serial": format(cert.serial_number, "x"),
-            "fingerprint": cert.fingerprint(hashes.SHA256()).hex(),
-            "not_before": cert.not_valid_before_utc.isoformat(),
-            "not_after": expiry.isoformat(),
-            "days_left": days_left,
-            "status": status,
-            "available": True,
-        }
-
-    return {
-        "root": cert_info(ca._root_ca_cert, "Root CA"),
-        "sub_cas": [
-            cert_info(ca._cpo_sub_ca_cert, "CPO Sub-CA (SECC)"),
-            cert_info(ca._mo_sub_ca_cert, "MO Sub-CA (Contracts)"),
-            cert_info(ca._user_sub_ca_cert, "User Sub-CA"),
-        ],
-    }
+# Audit log and CA hierarchy moved to api/pki_admin.py

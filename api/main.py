@@ -3,11 +3,12 @@ CPO REST API — FastAPI application.
 
 The public interface to OCPP Core. All writes go through here.
 """
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import config
 from api.ratelimit import RateLimitMiddleware
+from api.api_key_auth import management_auth
 
 app = FastAPI(
     title="OCPP Core API",
@@ -26,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Rate limiting (replaces Kong rate-limiting plugin)
+# Rate limiting
 app.add_middleware(
     RateLimitMiddleware,
     limits={
@@ -70,9 +71,9 @@ async def readiness():
 
 
 # ── API Routers ──────────────────────────────────────────────────────────
-# These will be added as we build each module:
 
 from api.pki import router as pki_router
+from api.pki_admin import router as pki_admin_router
 from api.chargers import router as chargers_router
 from api.sessions import router as sessions_router
 from api.tariffs import router as tariffs_router
@@ -80,46 +81,55 @@ from api.auth import router as auth_router
 from api.tokens import router as tokens_router
 from api.groups import router as groups_router
 from api.events import router as events_router
-from api.public import router as public_router, webhook_router
+from api.public import router as public_router, webhook_router, mgmt_public_router
+from api.public_auth import router as public_auth_router
+from api.public_sessions import router as public_sessions_router
 from api.users import router as users_router
 from api.features import router as features_router
-from api.accounts import router as accounts_router
+from api.accounts import router as accounts_router, mgmt_router as driver_accounts_mgmt_router
 from api.favorites import router as favorites_router
 from api.push import router as push_router
-from api.invoices import router as invoices_router
-from api.sepa import router as sepa_router
+from api.vehicles import router as vehicles_router
+from api.profiles import router as profiles_router
+from api.pricing import router as pricing_router
+from api.cert_setup import router as cert_setup_router
+from api.api_key_auth import management_auth
 
+_mgmt = [Depends(management_auth)]  # shorthand for management-only routes
+
+# ── Management endpoints (require MANAGEMENT_API_KEY) ────────────────────
+# Chargers + Sessions: read endpoints are public, write endpoints have per-route auth
 app.include_router(chargers_router, prefix="/api/v1/chargers", tags=["Chargers"])
 app.include_router(sessions_router, prefix="/api/v1/sessions", tags=["Sessions"])
-app.include_router(tariffs_router, prefix="/api/v1/tariffs", tags=["Tariffs"])
-app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authorization"])
-app.include_router(tokens_router, prefix="/api/v1/tokens", tags=["Tokens"])
-app.include_router(groups_router, prefix="/api/v1/groups", tags=["Groups"])
-app.include_router(pki_router, prefix="/api/v1/pki", tags=["PKI"])
-app.include_router(events_router, prefix="/api/v1/events", tags=["Events"])
-app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
-app.include_router(features_router)
+app.include_router(tariffs_router, prefix="/api/v1/tariffs", tags=["Tariffs"], dependencies=_mgmt)
+app.include_router(tokens_router, prefix="/api/v1/tokens", tags=["Tokens"], dependencies=_mgmt)
+app.include_router(groups_router, prefix="/api/v1/groups", tags=["Groups"], dependencies=_mgmt)
+app.include_router(pki_router, prefix="/api/v1/pki", tags=["PKI"], dependencies=_mgmt)
+app.include_router(pki_admin_router, prefix="/api/v1/pki", tags=["PKI Admin"], dependencies=_mgmt)
+app.include_router(events_router, prefix="/api/v1/events", tags=["Events"])  # No auth — read-only SSE
+app.include_router(users_router, prefix="/api/v1/users", tags=["Users"], dependencies=_mgmt)
+app.include_router(vehicles_router, prefix="/api/v1/fleet/vehicles", tags=["Fleet"], dependencies=_mgmt)
+app.include_router(driver_accounts_mgmt_router, prefix="/api/v1/driver-accounts", tags=["Driver Accounts"], dependencies=_mgmt)
+app.include_router(mgmt_public_router, prefix="/api/v1/public-sessions", tags=["Public Sessions"], dependencies=_mgmt)
+app.include_router(features_router, dependencies=_mgmt)
+
+# Auth router: protected by API key (admin creates RFID tokens etc.)
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authorization"], dependencies=_mgmt)
+
+# ── Public endpoints (no auth — charge app, webhooks) ─────────────────────
 app.include_router(accounts_router)   # prefix built-in: /api/v1/public/account
 app.include_router(favorites_router)  # prefix built-in: /api/v1/public/account/favorites
+app.include_router(public_router)          # prefix built-in: /api/v1/public
+app.include_router(public_auth_router)     # prefix built-in: /api/v1/public/auth
+app.include_router(public_sessions_router) # prefix built-in: /api/v1/public/sessions
+app.include_router(push_router)            # prefix built-in: /api/v1/public/push
+app.include_router(webhook_router)         # Payment webhook: POST /api/payments/webhook
 
-# Compatibility layer — maps old dashboard endpoints to new data
-# This lets the existing 20K-line dashboard frontend work with OCPP Core
-app.include_router(public_router)   # prefix built-in: /api/v1/public
-app.include_router(push_router)     # prefix built-in: /api/v1/public/push
-app.include_router(webhook_router)  # Mollie webhook: POST /api/payments/webhook
-app.include_router(invoices_router)  # Invoices: /api/v1/invoices + /api/v1/groups/{id}/invoices
-app.include_router(sepa_router)      # SEPA: /api/v1/groups/{id}/mandate + /api/v1/invoices/{id}/collect + webhook
+app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"], dependencies=_mgmt)
 
-from api.lago_webhook import router as lago_webhook_router
-app.include_router(lago_webhook_router)  # Lago billing webhooks: POST /api/v1/webhooks/lago
+# Pricing — /current is public; /config and /tiers management auth is handled per-route in pricing.py
+app.include_router(pricing_router)
 
-from api.profiles import router as profiles_router
-app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"])
-
-from api.incidents import router as incidents_router
-from api.vehicles import router as vehicles_router
-from api.clients import router as clients_router
-
-app.include_router(incidents_router, prefix="/api/v1/incidents", tags=["Incidents"])
-app.include_router(vehicles_router, prefix="/api/v1/fleet/vehicles", tags=["Fleet"])
-app.include_router(clients_router, prefix="/api/v1/clients", tags=["Clients"])
+# Cert setup — driver certificate install wizard (prefix built-in: /api/v1/public/cert-setup)
+# create-token requires API key (admin), other endpoints are public (driver-facing)
+app.include_router(cert_setup_router)
