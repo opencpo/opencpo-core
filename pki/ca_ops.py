@@ -110,9 +110,3 @@ class CertificateOpsMixin:
                 continue
 
         return {"valid": False, "error": "Unknown issuer — not signed by our CA"}
-   "expires": cert.not_valid_after_utc.isoformat(),
-                }
-            except Exception:
-                continue
-
-        return {"valid": False, "error": "Unknown issuer — not signed by our CA"}
