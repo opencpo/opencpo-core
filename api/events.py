@@ -41,6 +41,8 @@ def get_event_bus() -> EventBus:
 
 # ── SSE Live Stream ──────────────────────────────────────────────────────
 
+# NOTE: In production, this endpoint should require management_auth or a read-only API key.
+# For the demo, it's intentionally public to allow the admin dashboard to connect.
 @router.get("/stream")
 async def event_stream(
     request: Request,

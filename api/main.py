@@ -14,6 +14,8 @@ app = FastAPI(
     title="OCPP Core API",
     description="Charge Point Operator REST API — OCPP 1.6j + 2.0.1",
     version="1.0.0",
+    # NOTE: /docs and /redoc are intentionally public on the demo VPS for easy API exploration.
+    # In production, set docs_url=None and redoc_url=None or guard behind VPN/auth.
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -101,6 +103,7 @@ _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
 # ── Management endpoints (require MANAGEMENT_API_KEY) ────────────────────
 # Chargers + Sessions: read endpoints are public, write endpoints have per-route auth
 app.include_router(chargers_router, prefix="/api/v1/chargers", tags=["Chargers"])
+app.include_router(charger_commands_router, prefix="/api/v1/chargers", tags=["Charger Commands"])
 app.include_router(sessions_router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(tariffs_router, prefix="/api/v1/tariffs", tags=["Tariffs"], dependencies=_mgmt)
 app.include_router(tokens_router, prefix="/api/v1/tokens", tags=["Tokens"], dependencies=_mgmt)
