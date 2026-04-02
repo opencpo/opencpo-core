@@ -20,6 +20,7 @@ class EventType(str, Enum):
     CHARGER_CONFIG = "charger.config"
     CHARGER_FIRMWARE = "charger.firmware"
     CHARGER_BOOT = "charger.boot"
+    CHARGER_HEARTBEAT = "charger.heartbeat"
 
     # Session lifecycle
     SESSION_START = "session.start"

@@ -219,6 +219,14 @@ class ChargePointHandler:
                     status = 'online', last_heartbeat = $2
             """, self.cp_id, now)
 
+        # Publish heartbeat event
+        await self.event_bus.publish(Event(
+            type=EventType.CHARGER_HEARTBEAT,
+            charge_point=self.cp_id,
+            simulated=self._simulated,
+            data={"timestamp": now.isoformat()},
+        ))
+
         # Process any queued RemoteStart commands (reconnect without reboot path)
         asyncio.get_running_loop().call_soon(
             lambda: asyncio.ensure_future(self._process_pending_starts())

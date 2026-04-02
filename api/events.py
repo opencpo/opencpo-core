@@ -124,10 +124,34 @@ async def event_history(
     since: str = Query("-", description="Start (Redis stream ID or '-')"),
     until: str = Query("+", description="End (Redis stream ID or '+')"),
     count: int = Query(100, ge=1, le=1000),
+    limit: int = Query(None, ge=1, le=1000, description="Alias for count"),
+    charge_point: str = Query(None, description="Filter by charge point ID"),
+    types: str = Query(None, description="Comma-separated event types to filter"),
 ):
-    """Query historical events from the stream."""
+    """Query historical events from the stream.
+
+    Supports filtering by charge_point and event types. Both `count` and `limit`
+    are accepted (limit takes precedence when provided).
+    """
     bus = get_event_bus()
-    events = await bus.history(since=since, until=until, count=count)
+    effective_count = limit if limit is not None else count
+    events = await bus.history(since=since, until=until, count=effective_count)
+
+    # Post-filter by charge_point
+    if charge_point:
+        events = [e for e in events if e.charge_point == charge_point]
+
+    # Post-filter by event types
+    if types:
+        requested = set(t.strip() for t in types.split(","))
+        filtered = []
+        for e in events:
+            for t in requested:
+                if e.type.value == t or e.type.value.startswith(t + "."):
+                    filtered.append(e)
+                    break
+        events = filtered
+
     return {
         "events": [e.to_dict() for e in events],
         "count": len(events),
