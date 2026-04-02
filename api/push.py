@@ -19,18 +19,16 @@ router = APIRouter(prefix="/api/v1/public/push", tags=["push"])
 
 # ── VAPID config ──────────────────────────────────────────────────────────
 
-# Generate with: openssl ecparam -genkey -name prime256v1 | openssl ec -out vapid_private.pem
-VAPID_PRIVATE_KEY = os.getenv(
-    "VAPID_PRIVATE_KEY",
-    "",
-)
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_EMAIL = os.getenv("VAPID_EMAIL", "mailto:info@example.com")
 
-VAPID_PUBLIC_KEY = os.getenv(
-    "VAPID_PUBLIC_KEY",
-    "",
-)
-
-VAPID_EMAIL = os.getenv("VAPID_EMAIL", "mailto:admin@example.com")
+if not VAPID_PRIVATE_KEY:
+    logger.warning(
+        "VAPID_PRIVATE_KEY not set — push notifications disabled. "
+        "Generate keys with: python -c \"from py_vapid import Vapid; v=Vapid(); v.generate_keys(); "
+        "print('Private:', v.private_pem().decode()); print('Public:', v.public_key)\""
+    )
 
 
 # ── DB init ───────────────────────────────────────────────────────────────
@@ -110,6 +108,9 @@ async def unsubscribe(body: PushUnsubscribeRequest):
 
 def send_push(subscription_info: dict, title: str, body: str, url: Optional[str] = None) -> None:
     """Send a Web Push notification. Runs synchronously — call from asyncio via run_in_executor."""
+    if not VAPID_PRIVATE_KEY:
+        logger.debug("Push skipped — VAPID_PRIVATE_KEY not configured")
+        return
     try:
         from pywebpush import webpush, WebPushException
 
@@ -144,7 +145,7 @@ async def send_push_for_session(session_id: str, title: str, body: str, url: Opt
         subscription_info = json.loads(row["subscription"]) if isinstance(row["subscription"], str) else dict(row["subscription"])
 
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, send_push, subscription_info, title, body, url)
         return True
     except Exception as e:

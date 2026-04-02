@@ -148,6 +148,14 @@ async def handle_stop_transaction(
     if session:
         session_id = session["session_id"]
 
+        # Update public_sessions.stopped_at + kwh_delivered (charge app receipt flow)
+        async with db.write() as conn:
+            await conn.execute("""
+                UPDATE ocpp.public_sessions
+                SET stopped_at = $1, kwh_delivered = $2
+                WHERE ocpp_transaction_id = $3 AND stopped_at IS NULL
+            """, timestamp, final_energy, transaction_id)
+
         # Clean up Redis
         await redis_state.del_session(session_id)
 
@@ -183,31 +191,135 @@ async def _notify_session_complete(
     energy_kwh: float,
     transaction_id: int,
 ) -> None:
-    """Send push notification to driver on session completion (best-effort)."""
+    """Send push notification + receipt email to driver on session completion (best-effort)."""
     try:
         # Look up public session by ocpp_transaction_id to get rate and public session id
         async with db.read() as conn:
             row = await conn.fetchrow("""
-                SELECT id::text as public_id, rate_kwh
+                SELECT id::text as public_id, rate_kwh, driver_email, driver_phone,
+                       driver_account_id
                 FROM ocpp.public_sessions
                 WHERE ocpp_transaction_id = $1
                 LIMIT 1
             """, transaction_id)
 
         if not row:
-            return  # No public session (e.g. RFID session) — skip push
+            return  # No public session (e.g. RFID session) — skip
 
         public_id = row["public_id"]
         rate_kwh = float(row["rate_kwh"] or 0)
         cost = energy_kwh * rate_kwh * 1.21  # incl BTW
 
+        # Push notification
         title = "⚡ Laden voltooid"
         body = f"{energy_kwh:.2f} kWh geladen — €{cost:.2f}".replace(".", ",")
         url = f"/receipt/{public_id}"
 
         await send_push_for_session(public_id, title, body, url)
+
+        # Receipt email — resolve email from session or driver account
+        email = row["driver_email"]
+        if not email and row["driver_account_id"]:
+            async with db.read() as conn:
+                acct = await conn.fetchrow(
+                    "SELECT email FROM ocpp.driver_accounts WHERE id = $1",
+                    row["driver_account_id"],
+                )
+            if acct:
+                email = acct["email"]
+
+        if email and energy_kwh > 0:
+            await _send_receipt_email(public_id, email, energy_kwh, cost)
+
     except Exception as e:
-        logger.warning(f"Push notification failed for session {ocpp_session_id}: {e}")
+        logger.warning(f"Session completion notification failed for {ocpp_session_id}: {e}")
+
+
+async def _send_receipt_email(
+    session_id: str, email: str, energy_kwh: float, cost: float
+) -> None:
+    """Generate receipt PDF and email it to the driver (best-effort, non-blocking)."""
+    import asyncio
+    try:
+        from api.receipt_pdf import generate_receipt_pdf
+        async with db.read() as conn:
+            session_data = await conn.fetchrow("""
+                SELECT ps.id::text AS id, ps.cp_id, ps.connector_id,
+                       ps.kwh_delivered, ps.rate_kwh, ps.started_at, ps.stopped_at,
+                       ps.driver_email, ps.driver_phone,
+                       cp.display_name, cp.address, cp.city
+                  FROM ocpp.public_sessions ps
+                  LEFT JOIN ocpp.charge_points cp ON cp.id = ps.cp_id
+                 WHERE ps.id = $1::uuid
+            """, session_id)
+
+        if not session_data:
+            return
+
+        pdf_bytes = generate_receipt_pdf(dict(session_data))
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _smtp_send_receipt, email, session_id, pdf_bytes, energy_kwh, cost)
+        logger.info(f"Receipt email sent to {email} for session {session_id[:8]}")
+
+    except Exception as e:
+        logger.warning(f"Receipt email failed for {session_id[:8]} to {email}: {e}")
+
+
+def _smtp_send_receipt(
+    to_email: str, session_id: str, pdf_bytes: bytes,
+    energy_kwh: float, cost: float
+) -> None:
+    """Blocking SMTP send — runs in thread executor."""
+    import os
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
+
+    host = os.environ.get("SMTP_HOST", "")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER", "")
+    passwd = os.environ.get("SMTP_PASS", "")
+    from_name = os.environ.get("SMTP_FROM_NAME", "OpenCPO")
+
+    if not passwd or not user:
+        return  # No SMTP configured — skip silently
+
+    cost_str = f"€{cost:.2f}".replace(".", ",")
+    kwh_str = f"{energy_kwh:.2f}".replace(".", ",")
+
+    msg = MIMEMultipart()
+    msg["From"] = f"{from_name} <{user}>"
+    msg["To"] = to_email
+    msg["Subject"] = f"Charging receipt — {kwh_str} kWh — {cost_str}"
+
+    body = f"""Dear customer,
+
+Thank you for charging with {from_name}.
+
+Session: {session_id[:8].upper()}
+Energy: {kwh_str} kWh
+Amount: {cost_str} (incl. VAT)
+
+Your receipt is attached as a PDF.
+
+Best regards,
+{from_name}
+"""
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    pdf_part = MIMEApplication(pdf_bytes, _subtype="pdf")
+    pdf_part.add_header(
+        "Content-Disposition", "attachment",
+        filename=f"Receipt-{session_id[:8].upper()}.pdf",
+    )
+    msg.attach(pdf_part)
+
+    with smtplib.SMTP(host, port) as smtp:
+        smtp.starttls()
+        smtp.login(user, passwd)
+        smtp.send_message(msg)
 
 
 def _calculate_cdr_cost(energy_kwh: float, tariff_rate: Decimal = Decimal("0.35")) -> dict:

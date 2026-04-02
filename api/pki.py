@@ -82,6 +82,37 @@ async def revoke_cert(req: RevokeRequest):
     return {"status": "revoked", "serial": req.serial}
 
 
+class RevokeAccountRequest(BaseModel):
+    email: str
+    reason: str = "account_revoked"
+
+
+@router.post("/revoke-account")
+async def revoke_account_certs(req: RevokeAccountRequest):
+    """Revoke ALL active certificates for an account (by email/CN match)."""
+    from state.postgres import db
+
+    # Find all active certs where CN matches the email
+    pattern = f"CN={req.email},%"
+    async with db.read() as conn:
+        certs = await conn.fetch("""
+            SELECT serial FROM ocpp.pki_certificates
+            WHERE status = 'active' AND subject LIKE $1
+        """, pattern)
+
+    if not certs:
+        raise HTTPException(404, f"No active certificates found for {req.email}")
+
+    revoked = []
+    for cert in certs:
+        success = await ca.revoke_certificate(cert["serial"], req.reason)
+        if success:
+            revoked.append(cert["serial"])
+
+    logger.warning("Account revoked: %s — %d certificates", req.email, len(revoked))
+    return {"status": "revoked", "email": req.email, "count": len(revoked), "serials": revoked}
+
+
 @router.get("/crl")
 async def get_crl():
     """Download the Certificate Revocation List."""

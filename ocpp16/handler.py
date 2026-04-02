@@ -173,14 +173,14 @@ class ChargePointHandler:
                      + (" [SIMULATED]" if self._simulated else ""))
 
         # Process any queued RemoteStart commands waiting for this charger to reconnect
-        asyncio.get_event_loop().call_soon(
+        asyncio.get_running_loop().call_soon(
             lambda: asyncio.ensure_future(self._process_pending_starts())
         )
 
         # If charger doesn't reliably send StatusNotification on boot,
         # request it via TriggerMessage after a short delay
         if not self.profile.sends_status_on_boot:
-            asyncio.get_event_loop().call_soon(
+            asyncio.get_running_loop().call_soon(
                 lambda: asyncio.ensure_future(self._request_connector_status())
             )
 
@@ -220,7 +220,7 @@ class ChargePointHandler:
             """, self.cp_id, now)
 
         # Process any queued RemoteStart commands (reconnect without reboot path)
-        asyncio.get_event_loop().call_soon(
+        asyncio.get_running_loop().call_soon(
             lambda: asyncio.ensure_future(self._process_pending_starts())
         )
 
@@ -269,8 +269,9 @@ class ChargePointHandler:
         """Authorization request (RFID tap or remote) — queries ocpp.tokens."""
         id_tag = payload.get("idTag", "")
 
-        # App-initiated sessions (Mollie payment flow) always accepted
-        if id_tag.startswith("APP_"):
+        # App-initiated sessions (Mollie payment flow) or management-initiated
+        # remote commands (REMOTE tag) — always accepted
+        if id_tag.startswith("APP_") or id_tag == "REMOTE":
             self._last_auth_billing = {"type": "prepaid", "group_id": None}
             status = AuthorizationStatus.ACCEPTED
         else:

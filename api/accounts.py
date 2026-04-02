@@ -51,13 +51,13 @@ def verify_token(token: str) -> dict:
 async def get_current_account(request: Request) -> dict:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
-        raise HTTPException(401, "Niet ingelogd")
+        raise HTTPException(401, "Not authenticated")
     try:
         return verify_token(auth[7:])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Sessie verlopen — log opnieuw in")
+        raise HTTPException(401, "Session expired — please log in again")
     except jwt.InvalidTokenError:
-        raise HTTPException(401, "Ongeldige sessie")
+        raise HTTPException(401, "Invalid session token")
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ class RegisterRequest(BaseModel):
     password: str
     name: Optional[str] = None
     phone: Optional[str] = None
-    language: Optional[str] = "nl"
+    language: Optional[str] = "en"
 
 
 class LoginRequest(BaseModel):
@@ -88,9 +88,9 @@ async def register(req: RegisterRequest):
     """Create a new driver account."""
     email = req.email.strip().lower()
     if not email or "@" not in email:
-        raise HTTPException(400, "Ongeldig e-mailadres")
+        raise HTTPException(400, "Invalid email address")
     if not req.password or len(req.password) < 6:
-        raise HTTPException(400, "Wachtwoord moet minimaal 6 tekens zijn")
+        raise HTTPException(400, "Password must be at least 6 characters")
 
     # Hash password
     pw_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
@@ -101,14 +101,14 @@ async def register(req: RegisterRequest):
             "SELECT id FROM ocpp.driver_accounts WHERE email = $1", email
         )
         if existing:
-            raise HTTPException(409, "Dit e-mailadres is al in gebruik")
+            raise HTTPException(409, "This email address is already in use")
 
         row = await conn.fetchrow("""
             INSERT INTO ocpp.driver_accounts
                 (email, phone, password_hash, name, language)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id::text, email, phone, name, language, created_at
-        """, email, req.phone, pw_hash, req.name, req.language or "nl")
+        """, email, req.phone, pw_hash, req.name, req.language or "en")
 
     account_id = row["id"]
 
@@ -154,7 +154,7 @@ async def login(req: LoginRequest):
         """, email)
 
     if not row:
-        raise HTTPException(401, "Onjuist e-mailadres of wachtwoord")
+        raise HTTPException(401, "Incorrect email or password")
 
     # Verify password
     try:
@@ -163,7 +163,7 @@ async def login(req: LoginRequest):
         match = False
 
     if not match:
-        raise HTTPException(401, "Onjuist e-mailadres of wachtwoord")
+        raise HTTPException(401, "Incorrect email or password")
 
     token = create_token(row["id"], row["email"])
     logger.info("Account login: %s", email)
@@ -195,7 +195,7 @@ async def get_profile(request: Request):
         """, account_id)
 
     if not row:
-        raise HTTPException(404, "Account niet gevonden")
+        raise HTTPException(404, "Account not found")
 
     return {
         "id": row["id"],
@@ -223,7 +223,7 @@ async def update_profile(request: Request, update: ProfileUpdate):
         fields["language"] = update.language
 
     if not fields:
-        raise HTTPException(400, "Geen velden om bij te werken")
+        raise HTTPException(400, "No fields to update")
 
     set_parts = [f"{col} = ${i+2}" for i, col in enumerate(fields.keys())]
     values = list(fields.values())
@@ -240,7 +240,7 @@ async def update_profile(request: Request, update: ProfileUpdate):
         )
 
     if not row:
-        raise HTTPException(404, "Account niet gevonden")
+        raise HTTPException(404, "Account not found")
 
     # If phone was updated, retroactively link sessions
     if "phone" in fields and fields["phone"]:
@@ -278,7 +278,7 @@ async def get_account_sessions(request: Request, limit: int = 50, offset: int = 
                    ps.started_at,
                    ps.stopped_at,
                    ps.created_at,
-                   ps.mollie_status,
+                   ps.payment_status,
                    cp.display_name,
                    cp.address,
                    cp.city
@@ -322,7 +322,7 @@ async def get_account_sessions(request: Request, limit: int = 50, offset: int = 
             "started_at": r["started_at"].isoformat() if r["started_at"] else None,
             "stopped_at": r["stopped_at"].isoformat() if r["stopped_at"] else None,
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "mollie_status": r["mollie_status"],
+            "payment_status": r["payment_status"],
         })
 
     return {
@@ -333,3 +333,114 @@ async def get_account_sessions(request: Request, limit: int = 50, offset: int = 
         "limit": limit,
         "offset": offset,
     }
+
+
+# ── Management endpoints (API key required, mounted separately) ──────────
+
+mgmt_router = APIRouter(tags=["Driver Accounts (Management)"])
+
+
+@mgmt_router.get("")
+async def list_driver_accounts(limit: int = 100, offset: int = 0, group_id: str = None):
+    """List all driver accounts with their pricing tier. Optional group_id filter."""
+    async with db.read() as conn:
+        group_filter = ""
+        params = [limit, offset]
+        if group_id:
+            group_filter = "WHERE da.group_id = $3::uuid"
+            params.append(group_id)
+
+        rows = await conn.fetch(f"""
+            SELECT da.id::text, da.email, da.phone, da.name, da.pricing_tier,
+                   da.language, da.created_at, da.group_id::text,
+                   COUNT(ps.id) AS session_count,
+                   COALESCE(SUM(ps.kwh_delivered), 0) AS total_kwh
+              FROM ocpp.driver_accounts da
+              LEFT JOIN ocpp.public_sessions ps ON ps.driver_account_id = da.id
+             {group_filter}
+             GROUP BY da.id
+             ORDER BY da.created_at DESC
+             LIMIT $1 OFFSET $2
+        """, *params)
+        count_q = "SELECT COUNT(*) FROM ocpp.driver_accounts"
+        if group_id:
+            count = await conn.fetchval(count_q + " WHERE group_id = $1::uuid", group_id)
+        else:
+            count = await conn.fetchval(count_q)
+    return {
+        "accounts": [
+            {
+                "id": r["id"],
+                "email": r["email"],
+                "phone": r["phone"],
+                "name": r["name"],
+                "pricing_tier": r["pricing_tier"] or "public",
+                "language": r["language"],
+                "group_id": r["group_id"],
+                "session_count": r["session_count"],
+                "total_kwh": round(float(r["total_kwh"]), 3),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ],
+        "total": count,
+    }
+
+
+class DriverAccountUpdate(BaseModel):
+    pricing_tier: Optional[str] = None
+    group_id: Optional[str] = None  # UUID or null to remove from group
+    name: Optional[str] = None
+
+
+@mgmt_router.put("/{account_id}")
+async def update_driver_account(account_id: str, update: DriverAccountUpdate):
+    """Update a driver account (pricing tier, name)."""
+    updates = []
+    values = []
+    idx = 1
+
+    if update.pricing_tier is not None:
+        async with db.read() as conn:
+            tier = await conn.fetchrow(
+                "SELECT id FROM ocpp.pricing_tiers WHERE id = $1", update.pricing_tier
+            )
+        if not tier:
+            raise HTTPException(404, f"Pricing tier '{update.pricing_tier}' not found")
+        updates.append(f"pricing_tier = ${idx}")
+        values.append(update.pricing_tier)
+        idx += 1
+
+    if update.name is not None:
+        updates.append(f"name = ${idx}")
+        values.append(update.name)
+        idx += 1
+
+    if update.group_id is not None:
+        if update.group_id == "" or update.group_id == "null":
+            updates.append(f"group_id = NULL")
+        else:
+            async with db.read() as conn:
+                grp = await conn.fetchrow(
+                    "SELECT id FROM ocpp.token_groups WHERE id = $1::uuid", update.group_id
+                )
+            if not grp:
+                raise HTTPException(404, f"Group '{update.group_id}' not found")
+            updates.append(f"group_id = ${idx}::uuid")
+            values.append(update.group_id)
+            idx += 1
+
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    values.append(account_id)
+    async with db.write() as conn:
+        result = await conn.execute(
+            f"UPDATE ocpp.driver_accounts SET {', '.join(updates)} WHERE id::text = ${idx}",
+            *values,
+        )
+    if result == "UPDATE 0":
+        raise HTTPException(404, f"Account {account_id} not found")
+
+    logger.info("Driver account %s updated: %s", account_id[:8], update.model_dump(exclude_none=True))
+    return {"status": "updated", "id": account_id}

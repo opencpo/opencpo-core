@@ -78,34 +78,130 @@ MAXPOWER_CCS2_V3 = ChargerProfile(
 
 HONGJIALI_120KW = ChargerProfile(
     id="hongjiali-120kw",
-    vendor="HONGJIALI",
-    model_pattern=r"ENC-DCL120B.*",
-    firmware_pattern=r".*",
-    description="Hongjiali 120kW DC CCS2 dual-gun (OCPP 2.0.1)",
+    vendor="hjl",
+    model_pattern=r"ENC-DC[XL].*",      # firmware reports ENC-DCX030A, hardware is ENC-DCL120B
+    firmware_pattern=r"1\.0\.26\..*",
+    description="Hongjiali 120kW DC CCS2 dual-gun — compliance + load tested 2026-04-02",
 
-    # Defaults — will be updated when chargers are profiled
-    sends_power_measurand=True,
-    meter_interval_sec=15,
-    has_dual_voltage_current=False,
+    # MeterValues (confirmed via load test 2026-04-02)
+    sends_power_measurand=False,         # does NOT send Power.Active.Import — only V, A, Wh, SoC
+    power_unit="W",
+    energy_unit="Wh",                    # Energy.Active.Import.Register in Wh (e.g. "76171.0")
+    meter_interval_sec=13,               # measured ~13-14s between samples (config says 15)
+    has_dual_voltage_current=False,      # single V + single A per sample
+    soc_available=True,                  # sends SoC in Percent
+
+    # Session
+    authorize_after_remote_start=False,
+    preparing_on_boot=False,             # connectors show Available after boot, Preparing only when cable plugged
+    reports_connector_zero=True,         # sends StatusNotification for connector 0
+    resumes_session_after_reboot=False,
+    resumes_session_after_reconnect=True,
+
+    # Boot
+    boot_time_sec=15,
+    reconnect_retry_sec=15,
+    sends_boot_on_reconnect=False,
+    sends_status_on_boot=True,           # sends StatusNotification for all connectors (0,1,2)
+
+    # Power
     max_power_kw=120.0,
-    ramp_time_sec=45,
+    ramp_time_sec=10,
+    power_tapers_above_soc=80,
 
-    quirks=["Profile TBD — based on vendor spec, not field-tested"],
+    # Protocol compliance (from compliance test 2026-04-02)
+    smart_charging_safe=False,            # tester's SmartCharging format causes disconnect — needs investigation
+    unknown_action_returns_error=True,
+    heartbeat_drift_pct=15.0,            # drifts after fresh boot, stabilizes after ChangeConfiguration
+
+    quirks=[
+        # Factory compliance + load test 2026-04-02
+        "IDENTITY: firmware reports vendor='hjl', model='ENC-DCX030A' — actual hardware is ENC-DCL120B 120kW",
+        "IDENTITY: charger ID comes from WebSocket URL path, not firmware",
+        "BOOT: IMSI present (861963072183558) — 4G modem",
+        "BOOT: meterType='0', meterSerialNumber='000000000001' — placeholder values",
+        "PROTOCOL: 50 configuration keys, SupportedFeatureProfiles = Core,LocalAuthListManagement,SmartCharging,Reservation,RemoteTrigger",
+        "PROTOCOL: correctly returns CallError:NotImplemented for unknown actions",
+        "PROTOCOL: handles malformed JSON gracefully",
+        "REMOTE START: works correctly via OCPP Core API — Accepted, session starts, MeterValues flow",
+        "METER VALUES: 4 measurands — SoC (%), Current.Import (A), Energy.Active.Import.Register (Wh), Voltage (V)",
+        "METER VALUES: does NOT send Power.Active.Import — calculate from V×A",
+        "METER VALUES: format=Raw, context=Sample.Periodic, interval ~13-14s",
+        "METER VALUES: DC bus voltage ~995V under load",
+        "HEARTBEAT: drifts after fresh boot, stabilizes to 30s after ChangeConfiguration",
+        "SMART CHARGING: tester format causes disconnect — needs investigation",
+        "CONNECTORS: 2 connectors, Available on boot, Preparing when cable connected",
+        "MONTA COMPATIBLE: confirmed by client — RemoteStart worked flawlessly on Monta",
+    ],
 )
 
 HONGJIALI_30KW_PORTABLE = ChargerProfile(
     id="hongjiali-30kw-portable",
-    vendor="HONGJIALI",
+    vendor="hjl",
     model_pattern=r"ENC-DCX030A.*",
-    firmware_pattern=r".*",
-    description="Hongjiali 30kW portable DC charger",
+    firmware_pattern=r"1\.0\.26\..*",
+    description="Hongjiali 30kW portable DC charger, firmware 1.0.26.x — compliance tested 2026-04-02",
 
-    sends_power_measurand=True,
-    meter_interval_sec=30,
+    # MeterValues (confirmed via load test 2026-04-02)
+    sends_power_measurand=False,         # does NOT send Power.Active.Import — only V, A, Wh, SoC
+    power_unit="W",
+    energy_unit="Wh",                    # Energy.Active.Import.Register in Wh (e.g. "76171.0")
+    meter_interval_sec=13,               # measured ~13-14s between samples (config says 15)
+    has_dual_voltage_current=False,      # single V + single A per sample
+    soc_available=True,                  # sends SoC in Percent
+
+    # Session
+    authorize_after_remote_start=False,
+    preparing_on_boot=False,             # connectors show Available after boot, Preparing only when cable plugged
+    reports_connector_zero=True,         # sends StatusNotification for connector 0
+    resumes_session_after_reboot=False,
+    resumes_session_after_reconnect=True,
+
+    # Boot
+    boot_time_sec=15,
+    reconnect_retry_sec=15,
+    sends_boot_on_reconnect=False,       # only sends Heartbeat on reconnect, Boot on power cycle
+    sends_status_on_boot=True,           # sends StatusNotification for all connectors (0,1,2)
+
+    # Power (from load test data)
     max_power_kw=30.0,
-    ramp_time_sec=10,
+    ramp_time_sec=10,                    # ramps from 0 to ~10kW in first sample interval
+    power_tapers_above_soc=80,
 
-    quirks=["Profile TBD — based on vendor spec, not field-tested"],
+    # Protocol compliance (from compliance test 2026-04-02)
+    smart_charging_safe=False,            # TESTER BUG: tester's SmartCharging format crashes connection.
+                                          # RemoteStart works fine via OCPP Core API. Needs investigation.
+    unknown_action_returns_error=True,    # correctly returns NotImplemented for unknown actions
+    heartbeat_drift_pct=15.0,            # first boot drifts, stabilizes to 30s ±10% after ChangeConfiguration
+
+    quirks=[
+        # Compliance test + load test 2026-04-02
+        "VENDOR: hjl (lowercase in BootNotification, not HONGJIALI)",
+        "BOOT: IMSI present (861963072183558) — 4G modem charger",
+        "BOOT: meterType='0', meterSerialNumber='000000000001' — placeholder values",
+        "PROTOCOL: 50 configuration keys supported",
+        "PROTOCOL: SupportedFeatureProfiles = Core,LocalAuthListManagement,SmartCharging,Reservation,RemoteTrigger",
+        "PROTOCOL: correctly returns CallError:NotImplemented for unknown actions (spec-compliant)",
+        "PROTOCOL: handles malformed JSON gracefully without disconnecting",
+        "PROTOCOL: no concurrent CALL violations",
+        "HEARTBEAT: drifts after fresh boot (~4.7s), stabilizes to 30s after ChangeConfiguration",
+        "REMOTE START: Accepted — works correctly via OCPP Core API. Tester's format causes disconnect (tester bug).",
+        "METER VALUES: 4 measurands — SoC (%), Current.Import (A), Energy.Active.Import.Register (Wh), Voltage (V)",
+        "METER VALUES: does NOT send Power.Active.Import — calculate from V×A if needed",
+        "METER VALUES: format=Raw, context=Sample.Periodic on all values",
+        "METER VALUES: interval ~13-14s (config=15s)",
+        "METER VALUES: energy in Wh with decimal (e.g. '76171.0')",
+        "METER VALUES: voltage reports high DC voltage (~995V at load) — this is the DC bus voltage",
+        "SMART CHARGING: tester's SetChargingProfile causes disconnect — needs investigation if it's payload format or firmware",
+        "TRIGGER: TriggerMessage works on second run (first run timed out — timing issue)",
+        "LOCAL AUTH: GetLocalListVersion returns -1 (empty list, working)",
+        "UNLOCK: UnlockConnector returns NotSupported",
+        "RESET: both Soft and Hard reset accepted",
+        "CONFIG: ChangeConfiguration accepted for known keys, NotSupported for unknown — spec-compliant",
+        "CONNECTORS: 2 connectors, Available on boot, Preparing when cable connected",
+        "SESSION: transaction IDs are sequential integers (396, 397, ...)",
+        "MONTA: RemoteStart worked flawlessly on Monta — confirmed by client. Our stack works too.",
+    ],
 )
 
 # Ordered list for the registry (specific → generic)

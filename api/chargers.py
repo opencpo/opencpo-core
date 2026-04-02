@@ -5,8 +5,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from api.api_key_auth import management_auth
 
 from state.postgres import db
 from state.redis import redis_state
@@ -171,7 +173,22 @@ async def charger_sessions(
             OFFSET ${idx} LIMIT ${idx + 1}
         """, *params)
 
-    return {"sessions": [dict(s) for s in sessions]}
+    # Enrich active sessions with live data from Redis (power_kw, soc, energy)
+    result = []
+    for s in sessions:
+        session_data = dict(s)
+        session_data["id"] = str(s["id"])
+        session_data["start_time"] = s["start_time"].isoformat() if s["start_time"] else None
+        session_data["stop_time"] = s["stop_time"].isoformat() if s["stop_time"] else None
+        if s["status"] == "active":
+            live = await redis_state.get_session(str(s["id"]))
+            if live:
+                session_data["power_kw"] = float(live.get("power_kw", 0) or 0)
+                session_data["energy_kwh"] = float(live.get("energy_kwh", s["energy_kwh"] or 0))
+                session_data["soc_pct"] = int(live["soc_pct"]) if live.get("soc_pct") else None
+        result.append(session_data)
+
+    return {"sessions": result}
 
 
 # ── Remote Commands ──────────────────────────────────────────────────────
@@ -187,53 +204,127 @@ class ChargingProfileRequest(BaseModel):
     duration_seconds: int = 0
 
 
-@router.post("/{cp_id}/start")
+@router.post("/{cp_id}/start", dependencies=[Depends(management_auth)])
 async def remote_start(cp_id: str, req: RemoteStartRequest):
     """Send RemoteStartTransaction to a charger."""
-    # This will be wired to the OCPP server's send_to method
-    # For now: validate and return accepted
-    live = await redis_state.get_charger(cp_id)
-    if not live or live.get("status") != "online":
-        raise HTTPException(400, f"Charger {cp_id} is not online")
+    from state.charger_registry import send_remote_start, is_connected
 
-    logger.info(f"Remote start: {cp_id} connector={req.connector_id}")
-    return {"status": "Accepted", "charge_point": cp_id}
+    if not is_connected(cp_id):
+        raise HTTPException(400, f"Charger {cp_id} is not connected")
+
+    id_tag = req.id_tag or "REMOTE"
+    msg_id = await send_remote_start(cp_id, req.connector_id, id_tag)
+    if msg_id is None:
+        raise HTTPException(502, f"Failed to send RemoteStartTransaction to {cp_id}")
+
+    return {"status": "Accepted", "charge_point": cp_id, "msg_id": msg_id}
 
 
-@router.post("/{cp_id}/stop")
-async def remote_stop(cp_id: str, transaction_id: int = Query(None)):
+@router.post("/{cp_id}/stop", dependencies=[Depends(management_auth)])
+async def remote_stop(cp_id: str, transaction_id: int = Query(None), connector_id: int = Query(None)):
     """Send RemoteStopTransaction to a charger."""
-    live = await redis_state.get_charger(cp_id)
-    if not live or live.get("status") != "online":
-        raise HTTPException(400, f"Charger {cp_id} is not online")
+    from state.charger_registry import send_remote_stop, is_connected
 
-    logger.info(f"Remote stop: {cp_id} txn={transaction_id}")
-    return {"status": "Accepted", "charge_point": cp_id}
+    if not is_connected(cp_id):
+        raise HTTPException(400, f"Charger {cp_id} is not connected")
+
+    # Look up the active session — by connector if specified, otherwise most recent
+    if transaction_id is None:
+        async with db.read() as conn:
+            if connector_id is not None:
+                row = await conn.fetchrow(
+                    "SELECT transaction_id FROM ocpp.sessions WHERE charge_point = $1 AND connector_id = $2 AND status = 'active' ORDER BY start_time DESC LIMIT 1",
+                    cp_id, connector_id,
+                )
+            else:
+                row = await conn.fetchrow(
+                    "SELECT transaction_id FROM ocpp.sessions WHERE charge_point = $1 AND status = 'active' ORDER BY start_time DESC LIMIT 1",
+                    cp_id,
+                )
+        if not row or not row["transaction_id"]:
+            raise HTTPException(400, f"No active session found for {cp_id}" + (f" connector {connector_id}" if connector_id else ""))
+        transaction_id = row["transaction_id"]
+
+    msg_id = await send_remote_stop(cp_id, transaction_id)
+    if msg_id is None:
+        raise HTTPException(502, f"Failed to send RemoteStopTransaction to {cp_id}")
+
+    return {"status": "Accepted", "charge_point": cp_id, "transaction_id": transaction_id, "msg_id": msg_id}
 
 
-@router.post("/{cp_id}/reset")
+@router.post("/{cp_id}/reset", dependencies=[Depends(management_auth)])
 async def reset_charger(cp_id: str, reset_type: str = Query("Soft")):
     """Send Reset command to a charger."""
+    from state.charger_registry import send_reset, is_connected
+
     if reset_type not in ("Soft", "Hard"):
         raise HTTPException(400, "reset_type must be 'Soft' or 'Hard'")
 
-    logger.info(f"Reset: {cp_id} type={reset_type}")
-    return {"status": "Accepted", "charge_point": cp_id, "type": reset_type}
+    if not is_connected(cp_id):
+        raise HTTPException(400, f"Charger {cp_id} is not connected")
+
+    msg_id = await send_reset(cp_id, reset_type)
+    if msg_id is None:
+        raise HTTPException(502, f"Failed to send Reset to {cp_id}")
+
+    return {"status": "Accepted", "charge_point": cp_id, "type": reset_type, "msg_id": msg_id}
 
 
-@router.post("/{cp_id}/profile")
+@router.post("/{cp_id}/profile", dependencies=[Depends(management_auth)])
 async def set_charging_profile(cp_id: str, req: ChargingProfileRequest):
     """
     Set charging profile (power limit) on a charger.
-    Used by EMS for smart charging. This is the OCPP soft ceiling —
-    factory Modbus load balancer always has final say.
+    Used by EMS for smart charging.
     """
-    live = await redis_state.get_charger(cp_id)
-    if not live or live.get("status") != "online":
-        raise HTTPException(400, f"Charger {cp_id} is not online")
+    from state.charger_registry import send_command, is_connected
 
-    logger.info(f"SetChargingProfile: {cp_id} limit={req.limit_kw}kW connector={req.connector_id}")
-    return {"status": "Accepted", "charge_point": cp_id, "limit_kw": req.limit_kw}
+    if not is_connected(cp_id):
+        raise HTTPException(400, f"Charger {cp_id} is not connected")
+
+    # OCPP 1.6 SetChargingProfile
+    profile_payload = {
+        "connectorId": req.connector_id,
+        "csChargingProfiles": {
+            "chargingProfileId": 1,
+            "stackLevel": 0,
+            "chargingProfilePurpose": "TxDefaultProfile",
+            "chargingProfileKind": "Absolute",
+            "chargingSchedule": {
+                "chargingRateUnit": "W",
+                "chargingSchedulePeriod": [
+                    {"startPeriod": 0, "limit": req.limit_kw * 1000}
+                ],
+            },
+        },
+    }
+    if req.duration_seconds > 0:
+        profile_payload["csChargingProfiles"]["chargingSchedule"]["duration"] = req.duration_seconds
+
+    msg_id = await send_command(cp_id, "SetChargingProfile", profile_payload)
+    if msg_id is None:
+        raise HTTPException(502, f"Failed to send SetChargingProfile to {cp_id}")
+
+    return {"status": "Accepted", "charge_point": cp_id, "limit_kw": req.limit_kw, "msg_id": msg_id}
+
+
+class GenericCommandRequest(BaseModel):
+    action: str
+    payload: dict = {}
+
+
+@router.post("/{cp_id}/command", dependencies=[Depends(management_auth)])
+async def send_generic_command(cp_id: str, req: GenericCommandRequest):
+    """Send any OCPP command to a charger. Used by terminal UI and GetConfiguration."""
+    from state.charger_registry import send_command, is_connected
+
+    if not is_connected(cp_id):
+        raise HTTPException(400, f"Charger {cp_id} is not connected")
+
+    msg_id = await send_command(cp_id, req.action, req.payload)
+    if msg_id is None:
+        raise HTTPException(502, f"Failed to send {req.action} to {cp_id}")
+
+    return {"status": "Accepted", "charge_point": cp_id, "action": req.action, "msg_id": msg_id}
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────
@@ -263,7 +354,7 @@ class UpdateChargerRequest(BaseModel):
     tariff_kwh: Optional[float] = None
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(management_auth)])
 async def create_charger(req: CreateChargerRequest):
     """Register a new charge point manually."""
     async with db.write() as conn:
@@ -284,7 +375,7 @@ async def create_charger(req: CreateChargerRequest):
     return {"id": req.id, "status": "created"}
 
 
-@router.put("/{cp_id}")
+@router.put("/{cp_id}", dependencies=[Depends(management_auth)])
 async def update_charger(cp_id: str, req: UpdateChargerRequest):
     """Update charge point details."""
     async with db.write() as conn:
@@ -295,7 +386,6 @@ async def update_charger(cp_id: str, req: UpdateChargerRequest):
             raise HTTPException(404, f"Charge point {cp_id} not found")
 
         # Build dynamic SET clause for non-None fields
-        # Standard columns
         col_map = {
             "vendor": req.vendor,
             "model": req.model,
@@ -345,7 +435,7 @@ async def update_charger(cp_id: str, req: UpdateChargerRequest):
     return {"id": cp_id, "status": "updated"}
 
 
-@router.delete("/{cp_id}")
+@router.delete("/{cp_id}", dependencies=[Depends(management_auth)])
 async def delete_charger(cp_id: str):
     """Delete a charge point and all its data (connectors, sessions, meter values)."""
     async with db.write() as conn:
@@ -355,19 +445,15 @@ async def delete_charger(cp_id: str):
         if not cp:
             raise HTTPException(404, f"Charge point {cp_id} not found")
 
-        # Delete meter values first (not FK-linked to charge_points)
         await conn.execute(
             "DELETE FROM ocpp.meter_values WHERE charge_point = $1", cp_id
         )
-        # Delete CDRs tied to sessions of this charger
-        await conn.execute("""
-            DELETE FROM ocpp.cdrs WHERE charge_point = $1
-        """, cp_id)
-        # Sessions (connectors cascade from charge_points)
+        await conn.execute(
+            "DELETE FROM ocpp.cdrs WHERE charge_point = $1", cp_id
+        )
         await conn.execute(
             "DELETE FROM ocpp.sessions WHERE charge_point = $1", cp_id
         )
-        # Charge point (connectors cascade via FK ON DELETE CASCADE)
         await conn.execute(
             "DELETE FROM ocpp.charge_points WHERE id = $1", cp_id
         )
@@ -379,15 +465,13 @@ async def delete_charger(cp_id: str):
     return {"id": cp_id, "status": "deleted"}
 
 
-@router.delete("")
+@router.delete("", dependencies=[Depends(management_auth)])
 async def bulk_delete_chargers(simulated: bool = Query(True)):
     """Bulk delete chargers. Default: only simulated/virtual ones."""
-    # Virtual charger prefixes (from charger farm tool)
     VIRTUAL_PREFIXES = ("STRESS-", "SIM-", "CHAOS-", "VAL-", "LOAD-", "FUZZ-", "FARM-", "PNC-")
 
     async with db.write() as conn:
         if simulated:
-            # Match both simulated=true AND known virtual prefixes
             prefix_conditions = " OR ".join(
                 f"id LIKE '{p}%'" for p in VIRTUAL_PREFIXES
             )

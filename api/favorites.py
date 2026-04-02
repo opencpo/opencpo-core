@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/public/account/favorites", tags=["favorites"])
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
+JWT_SECRET = os.environ.get("JWT_SECRET", "stroomlijnen-jwt-2026")
 JWT_ALGO = "HS256"
 
 # ── DB setup ──────────────────────────────────────────────────────────────

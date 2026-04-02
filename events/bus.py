@@ -71,13 +71,16 @@ class EventBus:
 
     # ── Consumer ─────────────────────────────────────────────────────────
 
-    async def ensure_group(self, group: str) -> None:
-        """Create consumer group if it doesn't exist."""
+    async def ensure_group(self, group: str, start_id: str = "0") -> None:
+        """Create consumer group if it doesn't exist.
+        
+        start_id: "0" = replay all history, "$" = only new messages from now.
+        """
         try:
             await self._redis.xgroup_create(
-                self.stream_name, group, id="0", mkstream=True
+                self.stream_name, group, id=start_id, mkstream=True
             )
-            logger.info(f"Consumer group '{group}' created")
+            logger.info(f"Consumer group '{group}' created (start={start_id})")
         except aioredis.ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 raise

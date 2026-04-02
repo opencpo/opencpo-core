@@ -72,18 +72,17 @@ async def event_stream(
     charger_filter = set(c.strip() for c in chargers.split(",")) if chargers else None
     site_filter = set(s.strip() for s in sites.split(",")) if sites else None
 
-    # Consumer identity
-    consumer_id = f"sse-{uuid.uuid4().hex[:8]}"
-    group = "sse-consumers"
-
     async def generate() -> AsyncGenerator[str, None]:
         bus = get_event_bus()
-        await bus.ensure_group(group)
+        # Each SSE connection gets its own ephemeral group starting from $ (no replay)
+        group = f"sse-stream-{uuid.uuid4().hex[:8]}"
+        consumer = "sse"
+        await bus.ensure_group(group, start_id="$")
 
         try:
             async for event in bus.consume(
                 group=group,
-                consumer=consumer_id,
+                consumer=consumer,
                 types=type_filter,
                 charge_points=charger_filter,
                 sites=site_filter,
@@ -101,6 +100,11 @@ async def event_stream(
 
         except asyncio.CancelledError:
             pass
+        finally:
+            try:
+                await bus._redis.xgroup_destroy(bus.stream_name, group)
+            except Exception:
+                pass
 
     return StreamingResponse(
         generate(),
@@ -143,21 +147,30 @@ async def stream_info():
 
 @router.get("/chargers/{cp_id}/live")
 async def charger_live(cp_id: str, request: Request):
-    """Live SSE stream for a single charger."""
+    """Live SSE stream for a single charger — only new events, no history replay."""
     async def generate():
         bus = get_event_bus()
-        consumer_id = f"cp-{cp_id}-{uuid.uuid4().hex[:6]}"
-        await bus.ensure_group("sse-charger-live")
+        # Each SSE connection gets its own ephemeral group starting from $
+        group = f"sse-cp-{cp_id}-{uuid.uuid4().hex[:8]}"
+        consumer = "sse"
+        await bus.ensure_group(group, start_id="$")
 
-        async for event in bus.consume(
-            group="sse-charger-live",
-            consumer=consumer_id,
-            charge_points={cp_id},
-            block_ms=30000,
-        ):
-            if await request.is_disconnected():
-                break
-            yield f"event: {event.type.value}\ndata: {event.to_json()}\nid: {event.event_id}\n\n"
+        try:
+            async for event in bus.consume(
+                group=group,
+                consumer=consumer,
+                charge_points={cp_id},
+                block_ms=30000,
+            ):
+                if await request.is_disconnected():
+                    break
+                yield f"event: {event.type.value}\ndata: {event.to_json()}\nid: {event.event_id}\n\n"
+        finally:
+            # Clean up ephemeral group on disconnect
+            try:
+                await bus._redis.xgroup_destroy(bus.stream_name, group)
+            except Exception:
+                pass
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -165,22 +178,29 @@ async def charger_live(cp_id: str, request: Request):
 
 @router.get("/sessions/{session_id}/live")
 async def session_live(session_id: str, request: Request):
-    """Live SSE stream for a single session (meter updates, stop)."""
+    """Live SSE stream for a single session — only new events, no history replay."""
     async def generate():
         bus = get_event_bus()
-        consumer_id = f"sess-{session_id[:8]}-{uuid.uuid4().hex[:6]}"
-        await bus.ensure_group("sse-session-live")
+        group = f"sse-sess-{uuid.uuid4().hex[:8]}"
+        consumer = "sse"
+        await bus.ensure_group(group, start_id="$")
 
-        async for event in bus.consume(
-            group="sse-session-live",
-            consumer=consumer_id,
-            types={EventType.SESSION_METER, EventType.SESSION_STOP, EventType.SESSION_CDR},
-            block_ms=30000,
-        ):
-            if await request.is_disconnected():
-                break
-            if event.session_id == session_id:
-                yield f"event: {event.type.value}\ndata: {event.to_json()}\nid: {event.event_id}\n\n"
+        try:
+            async for event in bus.consume(
+                group=group,
+                consumer=consumer,
+                types={EventType.SESSION_METER, EventType.SESSION_STOP, EventType.SESSION_CDR},
+                block_ms=30000,
+            ):
+                if await request.is_disconnected():
+                    break
+                if event.session_id == session_id:
+                    yield f"event: {event.type.value}\ndata: {event.to_json()}\nid: {event.event_id}\n\n"
+        finally:
+            try:
+                await bus._redis.xgroup_destroy(bus.stream_name, group)
+            except Exception:
+                pass
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

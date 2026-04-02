@@ -15,6 +15,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _resolve_group_id(group_id: str) -> str:
+    """Resolve a group identifier — accepts UUID or name (case-insensitive)."""
+    try:
+        import uuid
+        uuid.UUID(group_id)
+        return group_id  # Already a valid UUID
+    except ValueError:
+        async with db.read() as conn:
+            row = await conn.fetchrow(
+                "SELECT id::text FROM ocpp.token_groups WHERE LOWER(name) = LOWER($1)",
+                group_id,
+            )
+        if not row:
+            raise HTTPException(404, f"Group '{group_id}' not found")
+        return row["id"]
+
+
 # ── Models ───────────────────────────────────────────────────────────────────
 
 class GroupCreate(BaseModel):
@@ -92,6 +109,7 @@ async def create_group(body: GroupCreate):
 @router.get("/{group_id}")
 async def get_group(group_id: str):
     """Get group detail with all tokens and monthly usage summary."""
+    group_id = await _resolve_group_id(group_id)
     async with db.read() as conn:
         g = await conn.fetchrow(
             "SELECT * FROM ocpp.token_groups WHERE id = $1::uuid", group_id
@@ -135,6 +153,7 @@ async def get_group(group_id: str):
 @router.put("/{group_id}")
 async def update_group(group_id: str, body: GroupUpdate):
     """Update group details."""
+    group_id = await _resolve_group_id(group_id)
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
@@ -161,6 +180,7 @@ async def update_group(group_id: str, body: GroupUpdate):
 @router.delete("/{group_id}")
 async def delete_group(group_id: str):
     """Delete group — only if no active tokens."""
+    group_id = await _resolve_group_id(group_id)
     async with db.write() as conn:
         active = await conn.fetchval(
             "SELECT count(*) FROM ocpp.tokens WHERE group_id=$1::uuid AND status='active'",
@@ -179,6 +199,7 @@ async def delete_group(group_id: str):
 @router.get("/{group_id}/usage")
 async def get_group_usage(group_id: str, month: str = Query(None)):
     """Per-card usage breakdown for a given month (YYYY-MM, defaults to current)."""
+    group_id = await _resolve_group_id(group_id)
     if not month:
         month = datetime.now().strftime("%Y-%m")
     try:
@@ -220,28 +241,3 @@ async def get_group_usage(group_id: str, month: str = Query(None)):
         "total_cost": sum(float(r["cost"]) for r in rows),
         "total_sessions": sum(int(r["sessions"]) for r in rows),
     }
-
-
-@router.get("/{group_id}/invoice")
-async def get_group_invoice(group_id: str, month: str = Query(None)):
-    """Generate a branded PDF invoice for a group/month."""
-    from api.group_invoice import generate_invoice_pdf
-
-    if not month:
-        month = datetime.now().strftime("%Y-%m")
-
-    # Reuse usage data
-    usage = await get_group_usage(group_id, month)
-
-    async with db.read() as conn:
-        g = await conn.fetchrow(
-            "SELECT * FROM ocpp.token_groups WHERE id=$1::uuid", group_id
-        )
-
-    pdf_bytes = generate_invoice_pdf(_row(g), usage, month)
-    filename = f"invoice-{g['name'].lower().replace(' ','-')}-{month}.pdf"
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
