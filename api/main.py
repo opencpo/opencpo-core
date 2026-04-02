@@ -93,6 +93,7 @@ from api.vehicles import router as vehicles_router
 from api.profiles import router as profiles_router
 from api.pricing import router as pricing_router
 from api.cert_setup import router as cert_setup_router
+from api.settings import router as settings_router
 from api.api_key_auth import management_auth
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
@@ -126,6 +127,7 @@ app.include_router(push_router)            # prefix built-in: /api/v1/public/pus
 app.include_router(webhook_router)         # Payment webhook: POST /api/payments/webhook
 
 app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"], dependencies=_mgmt)
+app.include_router(settings_router, dependencies=_mgmt)
 
 # Pricing — /current is public; /config and /tiers management auth is handled per-route in pricing.py
 app.include_router(pricing_router)

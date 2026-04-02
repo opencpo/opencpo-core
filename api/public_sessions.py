@@ -160,7 +160,7 @@ async def create_session(req: SessionCreate):
             f"{operator_name}: your charging session has been created. "
             f"Track it here: {charge_app_url}/session/{session_id}"
         )
-        asyncio.get_running_loop().call_soon(lambda: _send_sms(req.driver_phone, sms_msg))
+        asyncio.get_event_loop().create_task(_send_sms(req.driver_phone, sms_msg))
 
     return {
         "session_id":    session_id,
