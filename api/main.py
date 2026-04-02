@@ -77,6 +77,7 @@ async def readiness():
 from api.pki import router as pki_router
 from api.pki_admin import router as pki_admin_router
 from api.chargers import router as chargers_router
+from api.charger_commands import router as charger_commands_router
 from api.sessions import router as sessions_router
 from api.tariffs import router as tariffs_router
 from api.auth import router as auth_router
