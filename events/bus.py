@@ -169,13 +169,25 @@ class EventBus:
         since: str = "-",
         until: str = "+",
         count: int = 100,
+        newest_first: bool = True,
     ) -> list[Event]:
-        """Read historical events from the stream."""
+        """Read historical events from the stream.
+        
+        By default returns the most recent events (newest_first=True).
+        Set newest_first=False to get oldest events from a given point.
+        """
         assert self._redis is not None
 
-        results = await self._redis.xrange(
-            self.stream_name, min=since, max=until, count=count
-        )
+        if newest_first and since == "-":
+            # Return most recent N events
+            results = await self._redis.xrevrange(
+                self.stream_name, max=until, min=since, count=count
+            )
+            results.reverse()  # Chronological order
+        else:
+            results = await self._redis.xrange(
+                self.stream_name, min=since, max=until, count=count
+            )
         events = []
         for msg_id, msg_data in results:
             try:
