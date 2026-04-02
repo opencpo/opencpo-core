@@ -15,26 +15,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _cpo_role_info() -> dict:
-    """Build our CPO role information from environment variables."""
+async def _get_ocpi_identity() -> dict:
+    """Return OCPI identity from settings DB, falling back to env vars."""
+    try:
+        from state.settings import get_setting
+        s = await get_setting("ocpi")
+    except Exception:
+        s = {}
     return {
-        "role": "CPO",
+        "country_code":  s.get("country_code")  or os.getenv("OCPI_COUNTRY_CODE", "NL"),
+        "party_id":      s.get("party_id")       or os.getenv("OCPI_PARTY_ID", "OCP"),
+        "role":          s.get("role")            or "CPO",
+        "operator_name": s.get("operator_name")  or os.getenv("OCPI_OPERATOR_NAME", "OpenCPO"),
+        "base_url":      s.get("base_url")        or os.getenv("OCPI_BASE_URL", "http://localhost:8000"),
+    }
+
+
+async def _cpo_role_info() -> dict:
+    """Build our CPO role information from settings (with env-var fallback)."""
+    identity = await _get_ocpi_identity()
+    return {
+        "role": identity["role"],
         "business_details": {
-            "name": os.getenv("OCPI_OPERATOR_NAME", "OCPP Core CPO"),
+            "name":    identity["operator_name"],
             "website": os.getenv("OCPI_OPERATOR_WEBSITE", ""),
         },
-        "party_id": os.getenv("OCPI_PARTY_ID", "OCP"),
-        "country_code": os.getenv("OCPI_COUNTRY_CODE", "NL"),
+        "party_id":     identity["party_id"],
+        "country_code": identity["country_code"],
     }
 
 
 @router.get("")
 async def get_credentials(token: str = Depends(verify_ocpi_token)):
     """Return our credentials to the partner."""
+    identity = await _get_ocpi_identity()
     return ocpi_response({
         "token": token,
-        "url": f"{_base_url()}/ocpi/versions",
-        "roles": [_cpo_role_info()],
+        "url": f"{identity['base_url']}/ocpi/versions",
+        "roles": [await _cpo_role_info()],
     })
 
 
@@ -73,10 +91,11 @@ async def post_credentials(request: Request):
 
     logger.info(f"OCPI credentials exchanged: {country_code}*{party_id} ({name}) role={partner_role}")
 
+    identity = await _get_ocpi_identity()
     return ocpi_response({
         "token": our_token,
-        "url": f"{_base_url()}/ocpi/versions",
-        "roles": [_cpo_role_info()],
+        "url": f"{identity['base_url']}/ocpi/versions",
+        "roles": [await _cpo_role_info()],
     })
 
 
@@ -97,10 +116,11 @@ async def put_credentials(request: Request, token: str = Depends(verify_ocpi_tok
             WHERE token_a = $3
         """, new_token, new_url, token)
 
+    identity = await _get_ocpi_identity()
     return ocpi_response({
         "token": token,
-        "url": f"{_base_url()}/ocpi/versions",
-        "roles": [_cpo_role_info()],
+        "url": f"{identity['base_url']}/ocpi/versions",
+        "roles": [await _cpo_role_info()],
     })
 
 
@@ -115,5 +135,4 @@ async def delete_credentials(token: str = Depends(verify_ocpi_token)):
     return ocpi_response()
 
 
-def _base_url() -> str:
-    return os.getenv("OCPI_BASE_URL", "http://localhost:8000")
+

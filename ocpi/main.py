@@ -70,13 +70,26 @@ async def verify_ocpi_token(request: Request) -> str:
 
 # ── Versions ─────────────────────────────────────────────────────────────
 
+async def _get_base_url() -> str:
+    """Return the OCPI base URL from settings DB, falling back to env var."""
+    try:
+        from state.settings import get_setting
+        s = await get_setting("ocpi")
+        if s.get("base_url"):
+            return s["base_url"]
+    except Exception:
+        pass
+    return _base_url()
+
+
 @ocpi_app.get("/ocpi/versions")
 async def versions():
     """OCPI versions endpoint — entry point for partners."""
+    base = await _get_base_url()
     return ocpi_response([
         {
             "version": "2.2.1",
-            "url": f"{_base_url()}/ocpi/2.2.1",
+            "url": f"{base}/ocpi/2.2.1",
         }
     ])
 
@@ -84,7 +97,7 @@ async def versions():
 @ocpi_app.get("/ocpi/2.2.1")
 async def version_details():
     """OCPI 2.2.1 module endpoints."""
-    base = f"{_base_url()}/ocpi/2.2.1"
+    base = f"{await _get_base_url()}/ocpi/2.2.1"
     return ocpi_response({
         "version": "2.2.1",
         "endpoints": [

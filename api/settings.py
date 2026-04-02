@@ -48,6 +48,16 @@ _DEFAULTS: dict[str, dict] = {
         "code_length":  6,
         "ttl_seconds":  300,
     },
+    "ocpi": {
+        "country_code":       "NL",
+        "party_id":           "OCP",
+        "role":               "CPO",
+        "operator_name":      "OpenCPO",
+        "emsp_country_code":  "NL",
+        "emsp_party_id":      "OCP",
+        "base_url":           "http://localhost:8000",
+        "versions_path":      "/ocpi/versions",
+    },
 }
 
 VALID_KEYS = set(_DEFAULTS.keys())

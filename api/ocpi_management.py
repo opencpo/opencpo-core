@@ -22,10 +22,24 @@ from state.postgres import db
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_OCPI_BASE_URL = os.getenv("OCPI_BASE_URL", "http://localhost:8000")
-_OCPI_COUNTRY_CODE = os.getenv("OCPI_COUNTRY_CODE", "NL")
-_OCPI_PARTY_ID = os.getenv("OCPI_PARTY_ID", "OCP")
-_OCPI_OPERATOR_NAME = os.getenv("OCPI_OPERATOR_NAME", "OpenCPO")
+
+async def _get_ocpi_identity() -> dict:
+    """Return OCPI identity from settings DB, falling back to env vars."""
+    try:
+        from state.settings import get_setting
+        s = await get_setting("ocpi")
+    except Exception:
+        s = {}
+    return {
+        "country_code":      s.get("country_code")      or os.getenv("OCPI_COUNTRY_CODE", "NL"),
+        "party_id":          s.get("party_id")           or os.getenv("OCPI_PARTY_ID", "OCP"),
+        "role":              s.get("role")               or "CPO",
+        "operator_name":     s.get("operator_name")      or os.getenv("OCPI_OPERATOR_NAME", "OpenCPO"),
+        "emsp_country_code": s.get("emsp_country_code")  or os.getenv("OCPI_COUNTRY_CODE", "NL"),
+        "emsp_party_id":     s.get("emsp_party_id")      or os.getenv("OCPI_PARTY_ID", "OCP"),
+        "base_url":          s.get("base_url")            or os.getenv("OCPI_BASE_URL", "http://localhost:8000"),
+        "versions_path":     s.get("versions_path")       or "/ocpi/versions",
+    }
 
 
 # ── Request / Response Models ────────────────────────────────────────────
@@ -33,27 +47,49 @@ _OCPI_OPERATOR_NAME = os.getenv("OCPI_OPERATOR_NAME", "OpenCPO")
 class PartnerCreate(BaseModel):
     party_id: str
     country_code: str
-    role: str = "EMSP"           # CPO, EMSP, HUB
+    role: str = "EMSP"             # CPO, EMSP, HUB
     name: str
-    url: str                     # Partner's OCPI versions URL
+    url: str                       # Partner's OCPI versions URL
     token_b: Optional[str] = None  # Their token (we call them with this)
+    # Roaming tariff markup
+    base_tariff_id:   Optional[str]   = None
+    roaming_fee_kwh:  Optional[float] = None  # Extra €/kWh on top of base tariff
+    roaming_fee_flat: Optional[float] = None  # Extra flat connection fee
+    roaming_fee_time: Optional[float] = None  # Extra €/min time fee
 
 
 class PartnerUpdate(BaseModel):
     name: Optional[str] = None
     url: Optional[str] = None
     token_b: Optional[str] = None
-    status: Optional[str] = None  # active, pending, suspended, disabled
+    status: Optional[str] = None   # active, pending, suspended, disabled
+    # Roaming tariff markup
+    base_tariff_id:   Optional[str]   = None
+    roaming_fee_kwh:  Optional[float] = None
+    roaming_fee_flat: Optional[float] = None
+    roaming_fee_time: Optional[float] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def _row_to_dict(row) -> dict:
-    """Convert asyncpg Record to dict, serialising datetime fields."""
+    """Convert asyncpg Record to dict, serialising datetime fields and expanding metadata."""
     d = dict(row)
     for k, v in d.items():
         if isinstance(v, datetime):
             d[k] = v.isoformat()
+    # Expand roaming markup fields from metadata jsonb
+    meta = d.get("metadata") or {}
+    if isinstance(meta, str):
+        import json as _json
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+    d["base_tariff_id"]   = meta.get("base_tariff_id")
+    d["roaming_fee_kwh"]  = meta.get("roaming_fee_kwh")
+    d["roaming_fee_flat"] = meta.get("roaming_fee_flat")
+    d["roaming_fee_time"] = meta.get("roaming_fee_time")
     return d
 
 
@@ -72,7 +108,7 @@ async def list_partners():
     """List all OCPI partners."""
     async with db.read() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM ocpp.ocpi_partners ORDER BY created_at DESC"
+            "SELECT *, metadata FROM ocpp.ocpi_partners ORDER BY created_at DESC"
         )
     partners = []
     for row in rows:
@@ -90,7 +126,7 @@ async def get_partner(partner_id: int):
     """Get a single OCPI partner by ID."""
     async with db.read() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM ocpp.ocpi_partners WHERE id = $1", partner_id
+            "SELECT *, metadata FROM ocpp.ocpi_partners WHERE id = $1", partner_id
         )
     if not row:
         raise HTTPException(404, f"Partner {partner_id} not found")
@@ -113,14 +149,26 @@ async def create_partner(partner: PartnerCreate):
     token_b is their token (we use it when calling them) — optional at creation,
     they can provide it later during the OCPI handshake.
     """
+    import json as _json
+
     token_a = secrets.token_urlsafe(32)
+
+    meta: dict = {}
+    if partner.base_tariff_id is not None:
+        meta["base_tariff_id"] = partner.base_tariff_id
+    if partner.roaming_fee_kwh is not None:
+        meta["roaming_fee_kwh"] = partner.roaming_fee_kwh
+    if partner.roaming_fee_flat is not None:
+        meta["roaming_fee_flat"] = partner.roaming_fee_flat
+    if partner.roaming_fee_time is not None:
+        meta["roaming_fee_time"] = partner.roaming_fee_time
 
     async with db.write() as conn:
         row = await conn.fetchrow("""
             INSERT INTO ocpp.ocpi_partners
-                (party_id, country_code, role, name, url, token_a, token_b, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
-            RETURNING id, party_id, country_code, role, name, url, status, created_at
+                (party_id, country_code, role, name, url, token_a, token_b, status, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb)
+            RETURNING id, party_id, country_code, role, name, url, status, created_at, metadata
         """,
             partner.party_id.upper(),
             partner.country_code.upper(),
@@ -129,6 +177,7 @@ async def create_partner(partner: PartnerCreate):
             partner.url,
             token_a,
             partner.token_b or None,
+            _json.dumps(meta),
         )
 
     logger.info(
@@ -145,21 +194,52 @@ async def create_partner(partner: PartnerCreate):
 
 @router.put("/partners/{partner_id}")
 async def update_partner(partner_id: int, update: PartnerUpdate):
-    """Update partner details — name, URL, token, or status."""
-    fields = []
-    values = []
-    idx = 1
+    """Update partner details — name, URL, token, status, or roaming markup."""
+    import json as _json
+
+    # Separate roaming metadata fields from direct column fields
+    meta_fields = {"base_tariff_id", "roaming_fee_kwh", "roaming_fee_flat", "roaming_fee_time"}
+    column_updates = {}
+    meta_updates = {}
 
     for field, value in update.model_dump(exclude_none=True).items():
-        fields.append(f"{field} = ${idx}")
-        values.append(value)
-        idx += 1
+        if field in meta_fields:
+            meta_updates[field] = value
+        else:
+            column_updates[field] = value
 
-    if not fields:
+    if not column_updates and not meta_updates:
         raise HTTPException(400, "No fields to update")
 
-    values.append(partner_id)
     async with db.write() as conn:
+        if meta_updates:
+            # Read existing metadata, merge, write back
+            row = await conn.fetchrow(
+                "SELECT metadata FROM ocpp.ocpi_partners WHERE id = $1", partner_id
+            )
+            if not row:
+                raise HTTPException(404, f"Partner {partner_id} not found")
+            existing_meta = row["metadata"] or {}
+            if isinstance(existing_meta, str):
+                try:
+                    existing_meta = _json.loads(existing_meta)
+                except Exception:
+                    existing_meta = {}
+            existing_meta.update(meta_updates)
+            column_updates["metadata"] = _json.dumps(existing_meta)
+
+        fields = []
+        values = []
+        idx = 1
+        for field, value in column_updates.items():
+            if field == "metadata":
+                fields.append(f"metadata = ${idx}::jsonb")
+            else:
+                fields.append(f"{field} = ${idx}")
+            values.append(value)
+            idx += 1
+
+        values.append(partner_id)
         result = await conn.execute(
             f"UPDATE ocpp.ocpi_partners SET {', '.join(fields)} WHERE id = ${idx}",
             *values,
@@ -168,7 +248,7 @@ async def update_partner(partner_id: int, update: PartnerUpdate):
     if result == "UPDATE 0":
         raise HTTPException(404, f"Partner {partner_id} not found")
 
-    logger.info("OCPI partner %d updated: %s", partner_id, list(update.model_dump(exclude_none=True).keys()))
+    logger.info("OCPI partner %d updated: columns=%s meta=%s", partner_id, list(column_updates.keys()), list(meta_updates.keys()))
     return {"status": "updated", "id": partner_id}
 
 
@@ -289,6 +369,9 @@ async def ocpi_status():
     """
     OCPI module status — our identity, endpoint health, and partner summary.
     """
+    identity = await _get_ocpi_identity()
+    versions_url = f"{identity['base_url']}{identity['versions_path']}"
+
     async with db.read() as conn:
         totals = await conn.fetchrow("""
             SELECT
@@ -302,7 +385,6 @@ async def ocpi_status():
         """)
 
     # Probe our own OCPI versions endpoint
-    versions_url = f"{_OCPI_BASE_URL}/ocpi/versions"
     our_health = "unknown"
     try:
         async with httpx.AsyncClient(timeout=3) as client:
@@ -314,12 +396,15 @@ async def ocpi_status():
     last_sync = totals["last_sync"]
     return {
         "identity": {
-            "country_code": _OCPI_COUNTRY_CODE,
-            "party_id": _OCPI_PARTY_ID,
-            "role": "CPO",
-            "operator_name": _OCPI_OPERATOR_NAME,
-            "base_url": _OCPI_BASE_URL,
-            "versions_url": versions_url,
+            "country_code":      identity["country_code"],
+            "party_id":          identity["party_id"],
+            "role":              identity["role"],
+            "operator_name":     identity["operator_name"],
+            "emsp_country_code": identity["emsp_country_code"],
+            "emsp_party_id":     identity["emsp_party_id"],
+            "base_url":          identity["base_url"],
+            "versions_url":      versions_url,
+            "versions_path":     identity["versions_path"],
         },
         "endpoints_health": our_health,
         "partners": {
