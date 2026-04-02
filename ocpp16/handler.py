@@ -377,19 +377,21 @@ class ChargePointHandler:
 
     async def _log_message(self, msg: OCPPMessage, response: OCPPMessage, latency_ms: float) -> None:
         """Log OCPP message to database."""
+        import json as _json
         try:
+            payload = _json.dumps(msg.payload) if isinstance(msg.payload, dict) else msg.payload
+            resp = _json.dumps(response.payload) if response and isinstance(response.payload, dict) else None
             async with db.write() as conn:
                 await conn.execute("""
                     INSERT INTO ocpp.ocpp_messages 
                         (charge_point, direction, ocpp_version, action, message_id, payload, response, latency_ms)
-                    VALUES ($1, 'in', '1.6', $2, $3, $4, $5, $6)
+                    VALUES ($1, 'in', '1.6', $2, $3, $4::jsonb, $5::jsonb, $6)
                 """,
                     self.cp_id, msg.action, msg.unique_id,
-                    msg.payload, response.payload if response else None,
-                    latency_ms,
+                    payload, resp, latency_ms,
                 )
         except Exception as e:
-            logger.debug(f"Failed to log message: {e}")  # Non-critical
+            logger.error(f"Failed to log message: {e}")
 
     # ── Post-Boot Connector Status Request ──────────────────────────────
 
