@@ -65,7 +65,15 @@ async def list_chargers(
         live = await redis_state.get_charger(cp["id"])
         data = {**dict(cp)}
         # Flatten metadata fields to top level for API consumers
-        meta = data.get("metadata") or {}
+        meta = data.get("metadata")
+        if isinstance(meta, str):
+            import json as _json
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        elif not isinstance(meta, dict):
+            meta = {}
         for mk in ("display_name", "address", "city", "latitude", "longitude",
                     "max_power_kw", "tariff_kwh", "access_type"):
             if mk not in data:
