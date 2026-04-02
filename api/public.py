@@ -45,10 +45,14 @@ async def qr_lookup(code: str):
 # ── Charger Discovery ────────────────────────────────────────────────────
 
 @router.get("/chargers/nearby")
-async def chargers_nearby(lat: float = 0.0, lng: float = 0.0, radius: float = 50):
-    """Return chargers from DB with live status from Redis."""
+async def chargers_nearby(
+    lat: float = 0.0, lng: float = 0.0, radius: float = 50,
+    include_simulated: bool = True,
+):
+    """Return chargers with location data, enriched with live status from Redis."""
+    sim_filter = "" if include_simulated else "AND simulated = false"
     async with db.read() as conn:
-        rows = await conn.fetch("""
+        rows = await conn.fetch(f"""
             SELECT id, vendor, model, status,
                    metadata->>'display_name' AS display_name,
                    metadata->>'address' AS address,
@@ -61,7 +65,7 @@ async def chargers_nearby(lat: float = 0.0, lng: float = 0.0, radius: float = 50
              WHERE (metadata->>'access_type' = 'public' OR metadata->>'access_type' IS NULL)
                AND metadata->>'latitude' IS NOT NULL
                AND metadata->>'longitude' IS NOT NULL
-               AND simulated = false
+               {sim_filter}
              ORDER BY id
         """)
 
