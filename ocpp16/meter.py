@@ -128,6 +128,16 @@ async def handle_meter_values(
         sampled = mv.get("sampledValue", [])
         readings = parse_sampled_values(sampled)
 
+        # Live charger state: write power/SoC to charger Redis hash (always, regardless of session)
+        power_kw = readings.get("power_kw", 0) or 0
+        charger_update = {}
+        if power_kw > 0:
+            charger_update[f"connector_{connector_id}_power_kw"] = str(round(power_kw, 2))
+        if readings.get("soc_pct"):
+            charger_update[f"connector_{connector_id}_soc_pct"] = str(readings["soc_pct"])
+        if charger_update:
+            await redis_state.set_charger(cp_id, charger_update)
+
         # Look up session context (meter_start for energy delta)
         session_id = None
         meter_start_wh = 0.0
@@ -174,13 +184,16 @@ async def handle_meter_values(
                 "timestamp": timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp),
             })
 
-            # 3. Sessions table: running session energy (single source of truth)
-            if session_energy_kwh > 0:
+            # 3. Sessions table: running session energy + peak power (single source of truth)
+            power_kw = readings.get("power_kw", 0) or 0
+            if session_energy_kwh > 0 or power_kw > 0:
                 async with db.write() as conn:
                     await conn.execute(
-                        "UPDATE ocpp.sessions SET energy_kwh = GREATEST(energy_kwh, $1) "
-                        "WHERE id::text = $2 AND status = 'active'",
-                        session_energy_kwh, session_id,
+                        "UPDATE ocpp.sessions SET "
+                        "energy_kwh = GREATEST(energy_kwh, $1), "
+                        "peak_power_kw = GREATEST(COALESCE(peak_power_kw, 0), $3) "
+                        "WHERE id::text = $2 AND LOWER(status) = 'active'",
+                        session_energy_kwh, session_id, power_kw,
                     )
 
         # 4. Public sessions (charge app): same derived energy
