@@ -219,7 +219,15 @@ async def generate_key(body: GenerateKeyRequest):
     tags = _tags_for_site_type(body.site_type)
 
     if not api_key or not tailnet:
-        raise HTTPException(400, "Tailscale API key and tailnet not configured — configure in Settings first")
+        # Return example/placeholder
+        return {
+            "key":      "tskey-example-configure-api-key-in-settings",
+            "reusable": body.reusable,
+            "expires":  None,
+            "tags":     tags,
+            "demo_mode": True,
+            "message":  "Configure your Tailscale API key in Settings to generate real keys.",
+        }
 
     try:
         payload = {
@@ -266,7 +274,19 @@ async def add_site(body: AddSiteRequest):
     tags_str = ",".join(tags)
 
     if not api_key or not tailnet:
-        raise HTTPException(400, "Tailscale API key and tailnet not configured — configure in Settings first")
+        example_key = "tskey-example-configure-api-key-in-settings"
+        command = (
+            f"curl -fsSL https://tailscale.com/install.sh | sh && "
+            f"tailscale up --authkey={example_key} --advertise-tags={tags_str}"
+        )
+        return {
+            "auth_key":  example_key,
+            "command":   command,
+            "tags":      tags,
+            "demo_mode": True,
+            "message":   "Configure your Tailscale API key in Settings to generate real join commands.",
+            "site_type": body.site_type,
+        }
 
     # Generate a real key
     key_resp = await generate_key(GenerateKeyRequest(
