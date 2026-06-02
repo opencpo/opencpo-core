@@ -1,8 +1,11 @@
 """Simple in-memory rate limiter middleware.
 
 No external dependencies. Uses a sliding window per client IP.
-Limits are per-minute. Configurable via env vars.
+Limits are per-minute. Configurable via env vars:
+  RATE_LIMIT_AUTH     — /api/v1/admin/auth (default: 300, was 30)
+  RATE_LIMIT_DEFAULT  — all other paths       (default: 120)
 """
+import os
 import time
 from collections import defaultdict
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -36,8 +39,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return len(self._requests[key])
 
     async def dispatch(self, request, call_next):
-        # Don't rate limit health checks or localhost (internal tools)
-        if request.url.path in ("/health", "/health/ready"):
+        # Don't rate limit health checks, localhost, or /me (session verification)
+        if request.url.path in ("/health", "/health/ready", "/api/v1/admin/auth/me"):
             return await call_next(request)
 
         ip = request.headers.get("X-Real-IP") or request.client.host

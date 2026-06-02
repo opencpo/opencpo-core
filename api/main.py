@@ -4,6 +4,7 @@ CPO REST API — FastAPI application.
 The public interface to OCPP Core. All writes go through here.
 """
 from fastapi import Depends, FastAPI
+import os
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import config
@@ -34,9 +35,9 @@ app.add_middleware(
         "/ocpi": 60,
         "/api/public": 60,
         "/api/payments": 60,
-        "/api/v1/admin/auth": 30,  # brute force protection
+        "/api/v1/admin/auth": int(os.getenv("RATE_LIMIT_AUTH", "300")),
     },
-    default_limit=120,
+    default_limit=int(os.getenv("RATE_LIMIT_DEFAULT", "120")),
 )
 
 
