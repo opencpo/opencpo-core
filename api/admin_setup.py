@@ -158,7 +158,6 @@ class StepPricingRequest(BaseModel):
 class StepFeaturesRequest(BaseModel):
     ocpi: bool = False
     billing: bool = False
-    ems: bool = False
     iso15118: bool = False
 
 
@@ -366,7 +365,6 @@ async def setup_features(body: StepFeaturesRequest):
     flags = {
         "ocpi": body.ocpi,
         "billing": body.billing,
-        "ems": body.ems,
         "iso15118": body.iso15118,
     }
 
