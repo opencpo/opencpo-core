@@ -102,6 +102,7 @@ from api.api_key_auth import management_auth
 from api.admin_auth import router as admin_auth_router
 from api.admin_setup import router as admin_setup_router
 from api.admin_update import router as admin_update_router
+from api.admin_backup import router as admin_backup_router
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
 
@@ -126,6 +127,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authorization"], d
 app.include_router(admin_auth_router)
 app.include_router(admin_setup_router)
 app.include_router(admin_update_router)
+app.include_router(admin_backup_router)
 
 # ── Public endpoints (no auth — charge app, webhooks) ─────────────────────
 app.include_router(accounts_router)

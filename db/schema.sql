@@ -555,3 +555,26 @@ CREATE TABLE IF NOT EXISTS ocpp.webhook_subscriptions (
     secret     TEXT        DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Update history (audit log of updates/backups/restores)
+CREATE TABLE IF NOT EXISTS ocpp.update_history (
+    id              SERIAL PRIMARY KEY,
+    event_type      TEXT NOT NULL,  -- 'update', 'backup', 'restore', 'migration'
+    from_version    TEXT,
+    to_version      TEXT,
+    status          TEXT NOT NULL DEFAULT 'completed',  -- 'completed', 'failed', 'rolled_back'
+    details         JSONB DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Backup records
+CREATE TABLE IF NOT EXISTS ocpp.backup_records (
+    id              SERIAL PRIMARY KEY,
+    filename        TEXT NOT NULL,
+    size_bytes      BIGINT NOT NULL DEFAULT 0,
+    checksum        TEXT,
+    version         TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',  -- 'active', 'deleted', 'restored'
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
