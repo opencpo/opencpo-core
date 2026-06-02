@@ -100,6 +100,7 @@ from api.settings import router as settings_router
 from api.ocpi_management import router as ocpi_mgmt_router
 from api.network import router as network_router
 from api.api_key_auth import management_auth
+from api.management import analytics_router, invitations_router, auth_router as demo_auth_router
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
 
@@ -139,6 +140,13 @@ app.include_router(network_router, dependencies=_mgmt)
 
 # Pricing — /current is public; /config and /tiers management auth is handled per-route in pricing.py
 app.include_router(pricing_router)
+
+# ── Demo Management API ──────────────────────────────────────────────────
+# Analytics + invitation management (requires MANAGEMENT_API_KEY)
+app.include_router(analytics_router)
+app.include_router(invitations_router)
+# Demo auth — no management key (used by demo login page)
+app.include_router(demo_auth_router)
 
 # Cert setup — driver certificate install wizard (prefix built-in: /api/v1/public/cert-setup)
 # create-token requires API key (admin), other endpoints are public (driver-facing)
