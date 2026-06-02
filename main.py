@@ -204,9 +204,13 @@ async def main():
         from events.consumers import lago_billing
         tasks.append(asyncio.create_task(lago_billing.run(event_bus), name="lago-billing"))
 
-    # REST API (uvicorn)
+    # REST API (uvicorn) — pass the app object directly, not the import string.
+    # Using "api.main:app" string caused silent binding failures because uvicorn
+    # re-imports the module inside the asyncio event loop, which can race with
+    # the existing import. Passing the app object avoids this entirely.
+    from api.main import app
     api_config = uvicorn.Config(
-        "api.main:app",
+        app,
         host=config.api.host,
         port=config.api.port,
         log_level=config.log_level.lower(),

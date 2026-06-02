@@ -14,8 +14,6 @@ app = FastAPI(
     title="OCPP Core API",
     description="Charge Point Operator REST API — OCPP 1.6j + 2.0.1",
     version="1.0.0",
-    # NOTE: /docs and /redoc are intentionally public on the demo VPS for easy API exploration.
-    # In production, set docs_url=None and redoc_url=None or guard behind VPN/auth.
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -33,12 +31,12 @@ app.add_middleware(
 app.add_middleware(
     RateLimitMiddleware,
     limits={
-        "/ocpi": 60,          # OCPI roaming: 60/min
-        "/api/public": 60,    # Public charge endpoints: 60/min
-        "/api/payments": 60,  # Payment webhooks: 60/min
-        "/api/v1/auth": 30,   # Auth endpoints: 30/min (brute force protection)
+        "/ocpi": 60,
+        "/api/public": 60,
+        "/api/payments": 60,
+        "/api/v1/admin/auth": 30,  # brute force protection
     },
-    default_limit=120,        # Everything else: 120/min
+    default_limit=120,
 )
 
 
@@ -100,12 +98,12 @@ from api.settings import router as settings_router
 from api.ocpi_management import router as ocpi_mgmt_router
 from api.network import router as network_router
 from api.api_key_auth import management_auth
-from api.management import analytics_router, invitations_router, auth_router as demo_auth_router
+from api.admin_auth import router as admin_auth_router
+from api.admin_setup import router as admin_setup_router
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
 
 # ── Management endpoints (require MANAGEMENT_API_KEY) ────────────────────
-# Chargers + Sessions: read endpoints are public, write endpoints have per-route auth
 app.include_router(chargers_router, prefix="/api/v1/chargers", tags=["Chargers"])
 app.include_router(charger_commands_router, prefix="/api/v1/chargers", tags=["Charger Commands"])
 app.include_router(sessions_router, prefix="/api/v1/sessions", tags=["Sessions"])
@@ -114,40 +112,32 @@ app.include_router(tokens_router, prefix="/api/v1/tokens", tags=["Tokens"], depe
 app.include_router(groups_router, prefix="/api/v1/groups", tags=["Groups"], dependencies=_mgmt)
 app.include_router(pki_router, prefix="/api/v1/pki", tags=["PKI"], dependencies=_mgmt)
 app.include_router(pki_admin_router, prefix="/api/v1/pki", tags=["PKI Admin"], dependencies=_mgmt)
-app.include_router(events_router, prefix="/api/v1/events", tags=["Events"])  # No auth — read-only SSE
+app.include_router(events_router, prefix="/api/v1/events", tags=["Events"])
 app.include_router(users_router, prefix="/api/v1/users", tags=["Users"], dependencies=_mgmt)
 app.include_router(vehicles_router, prefix="/api/v1/fleet/vehicles", tags=["Fleet"], dependencies=_mgmt)
 app.include_router(driver_accounts_mgmt_router, prefix="/api/v1/driver-accounts", tags=["Driver Accounts"], dependencies=_mgmt)
 app.include_router(mgmt_public_router, prefix="/api/v1/public-sessions", tags=["Public Sessions"], dependencies=_mgmt)
 app.include_router(features_router, dependencies=_mgmt)
-
-# Auth router: protected by API key (admin creates RFID tokens etc.)
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authorization"], dependencies=_mgmt)
 
+# Admin panel auth + setup (no management key — uses JWT / first-time gate)
+app.include_router(admin_auth_router)
+app.include_router(admin_setup_router)
+
 # ── Public endpoints (no auth — charge app, webhooks) ─────────────────────
-app.include_router(accounts_router)   # prefix built-in: /api/v1/public/account
-app.include_router(favorites_router)  # prefix built-in: /api/v1/public/account/favorites
-app.include_router(public_router)          # prefix built-in: /api/v1/public
-app.include_router(public_auth_router)     # prefix built-in: /api/v1/public/auth
-app.include_router(public_sessions_router) # prefix built-in: /api/v1/public/sessions
-app.include_router(push_router)            # prefix built-in: /api/v1/public/push
-app.include_router(webhook_router)         # Payment webhook: POST /api/payments/webhook
+app.include_router(accounts_router)
+app.include_router(favorites_router)
+app.include_router(public_router)
+app.include_router(public_auth_router)
+app.include_router(public_sessions_router)
+app.include_router(push_router)
+app.include_router(webhook_router)
 
 app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"], dependencies=_mgmt)
 app.include_router(settings_router, dependencies=_mgmt)
 app.include_router(ocpi_mgmt_router, prefix="/api/v1/ocpi", tags=["OCPI Management"], dependencies=_mgmt)
 app.include_router(network_router, dependencies=_mgmt)
-
-# Pricing — /current is public; /config and /tiers management auth is handled per-route in pricing.py
 app.include_router(pricing_router)
 
-# ── Demo Management API ──────────────────────────────────────────────────
-# Analytics + invitation management (requires MANAGEMENT_API_KEY)
-app.include_router(analytics_router)
-app.include_router(invitations_router)
-# Demo auth — no management key (used by demo login page)
-app.include_router(demo_auth_router)
-
-# Cert setup — driver certificate install wizard (prefix built-in: /api/v1/public/cert-setup)
-# create-token requires API key (admin), other endpoints are public (driver-facing)
+# Cert setup — driver certificate install wizard (public for driver-facing flows)
 app.include_router(cert_setup_router)

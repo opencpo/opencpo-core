@@ -297,13 +297,15 @@ CREATE TABLE IF NOT EXISTS ocpp.driver_favorites (
 -- Users (CPO Platform / mTLS)
 -- ============================================================================
 
--- Platform users (operators, installers, clients) authenticated via client certificates.
+-- Platform users (operators, installers, clients) authenticated via client certificates
+-- or email/password for the admin dashboard.
 CREATE TABLE IF NOT EXISTS ocpp.users (
     id                     SERIAL      PRIMARY KEY,
     email                  TEXT        NOT NULL UNIQUE,
     name                   TEXT        NOT NULL,
     phone                  TEXT,
-    role                   TEXT        NOT NULL DEFAULT 'client',
+    role                   TEXT        NOT NULL DEFAULT 'admin',
+    password_hash          TEXT,                -- bcrypt hash for email/password auth (nullable for cert-only users)
     cert_serial            TEXT,
     cert_issued_at         TIMESTAMPTZ,
     cert_expires_at        TIMESTAMPTZ,
