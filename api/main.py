@@ -101,6 +101,7 @@ from api.network import router as network_router
 from api.api_key_auth import management_auth
 from api.admin_auth import router as admin_auth_router
 from api.admin_setup import router as admin_setup_router
+from api.admin_update import router as admin_update_router
 
 _mgmt = [Depends(management_auth)]  # shorthand for management-only routes
 
@@ -121,9 +122,10 @@ app.include_router(mgmt_public_router, prefix="/api/v1/public-sessions", tags=["
 app.include_router(features_router, dependencies=_mgmt)
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authorization"], dependencies=_mgmt)
 
-# Admin panel auth + setup (no management key — uses JWT / first-time gate)
+# Admin panel auth + setup + update (no management key)
 app.include_router(admin_auth_router)
 app.include_router(admin_setup_router)
+app.include_router(admin_update_router)
 
 # ── Public endpoints (no auth — charge app, webhooks) ─────────────────────
 app.include_router(accounts_router)
