@@ -393,6 +393,13 @@ async def skip_step(step: str):
     if step not in STEPS:
         raise HTTPException(status_code=400, detail=f"Unknown step: {step}")
 
+    # Prevent skipping admin account — required for all other steps
+    if step == "admin" and not await _admin_exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot skip admin account — it is required to use the platform"
+        )
+
     await _set_step_flag(f"setup.step.{step}", "skipped")
     logger.info(f"Setup step skipped: {step}")
     return {"ok": True, "step": step, "skipped": True}
