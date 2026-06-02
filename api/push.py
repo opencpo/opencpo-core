@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1/public/push", tags=["push"])
 
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
-VAPID_EMAIL = os.getenv("VAPID_EMAIL", "mailto:info@example.com")
+VAPID_EMAIL = os.getenv("VAPID_EMAIL", "")
 
 if not VAPID_PRIVATE_KEY:
     logger.warning(

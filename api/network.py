@@ -86,31 +86,6 @@ def _tags_for_site_type(site_type: str) -> list[str]:
     return tag_map.get(site_type, ["tag:charger-site"])
 
 
-def _demo_nodes() -> list[dict]:
-    """Return mock data when no Tailscale API key is configured."""
-    now = datetime.now(timezone.utc).isoformat()
-    return [
-        {
-            "id":        "demo-node-1",
-            "hostname":  "ocpp-core-demo",
-            "addresses": ["100.64.0.1"],
-            "os":        "linux",
-            "lastSeen":  now,
-            "online":    True,
-            "tags":      ["tag:ocpp-server"],
-            "demo":      True,
-        },
-        {
-            "id":        "demo-node-2",
-            "hostname":  "charger-site-amsterdam",
-            "addresses": ["100.64.0.2"],
-            "os":        "linux",
-            "lastSeen":  now,
-            "online":    False,
-            "tags":      ["tag:charger-site"],
-            "demo":      True,
-        },
-    ]
 
 
 async def _ts_get(path: str, api_key: str) -> dict:
@@ -179,7 +154,7 @@ async def network_status():
 async def list_nodes():
     """
     Return all devices on the tailnet.
-    Uses Tailscale API if api_key is configured, otherwise returns demo data.
+    Uses Tailscale API if api_key is configured, otherwise returns empty list.
     """
     cfg = await _get_tailscale_config()
     api_key = cfg.get("api_key", "")
@@ -187,8 +162,8 @@ async def list_nodes():
 
     if not api_key or not tailnet:
         return {
-            "nodes":       _demo_nodes(),
-            "demo_mode":   True,
+            "nodes":       [],
+            "demo_mode":   False,
             "message":     "Add your Tailscale API key and tailnet name in Settings to see real devices.",
         }
 
@@ -244,15 +219,7 @@ async def generate_key(body: GenerateKeyRequest):
     tags = _tags_for_site_type(body.site_type)
 
     if not api_key or not tailnet:
-        # Return example/placeholder
-        return {
-            "key":      "tskey-auth-EXAMPLE-configure-api-key-in-settings",
-            "reusable": body.reusable,
-            "expires":  None,
-            "tags":     tags,
-            "demo_mode": True,
-            "message":  "Configure your Tailscale API key in Settings to generate real keys.",
-        }
+        raise HTTPException(400, "Tailscale API key and tailnet not configured — configure in Settings first")
 
     try:
         payload = {
@@ -299,19 +266,7 @@ async def add_site(body: AddSiteRequest):
     tags_str = ",".join(tags)
 
     if not api_key or not tailnet:
-        example_key = "tskey-auth-EXAMPLE-configure-api-key-in-settings"
-        command = (
-            f"curl -fsSL https://tailscale.com/install.sh | sh && "
-            f"tailscale up --authkey={example_key} --advertise-tags={tags_str}"
-        )
-        return {
-            "auth_key":  example_key,
-            "command":   command,
-            "tags":      tags,
-            "demo_mode": True,
-            "message":   "Configure your Tailscale API key in Settings to generate real join commands.",
-            "site_type": body.site_type,
-        }
+        raise HTTPException(400, "Tailscale API key and tailnet not configured — configure in Settings first")
 
     # Generate a real key
     key_resp = await generate_key(GenerateKeyRequest(

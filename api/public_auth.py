@@ -1,11 +1,6 @@
 """
 Public OTP authentication endpoints.
 Drivers authenticate with phone number + 6-digit OTP stored in Redis.
-
-Demo mode (when SMS provider is "demo" or not configured):
-  - send_otp returns {"sent": true, "demo_mode": true}
-  - Code "000000" is always accepted alongside the real stored code
-  - Client app shows a hint so developers can test without real SMS
 """
 import json
 import logging
@@ -25,9 +20,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/public", tags=["public-auth"])
 
-DEMO_CODE = "000000"
-
-
 class OtpRequest(BaseModel):
     phone: str
 
@@ -38,14 +30,10 @@ class OtpVerify(BaseModel):
 
 
 async def _is_demo_mode() -> bool:
-    """Return True if SMS provider is demo/unconfigured or OTP demo_mode is enabled."""
+    """Return True if OTP demo_mode setting is enabled."""
     from state.settings import get_setting
-    sms_cfg = await get_setting("sms")
     otp_cfg = await get_setting("otp")
-    if otp_cfg.get("demo_mode", False):
-        return True
-    provider = sms_cfg.get("provider", "demo")
-    return provider in ("demo", "")
+    return otp_cfg.get("demo_mode", False)
 
 
 async def _get_otp_config() -> dict:
@@ -83,7 +71,7 @@ async def send_otp(req: OtpRequest):
 
     demo = await _is_demo_mode()
     if demo:
-        logger.info("OTP demo mode for %s — real code stored, 000000 also accepted", phone[-4:])
+        logger.info("OTP demo mode for %s — code stored, will not send SMS", phone[-4:])
         return {"phone": phone, "sent": True, "demo_mode": True}
 
     operator_name = os.getenv("OPERATOR_NAME", "Your CPO")
@@ -112,8 +100,7 @@ async def verify_otp(req: OtpVerify):
         await redis_state.client.delete(f"otp:{phone}")
         raise HTTPException(429, "Too many attempts. Request a new code.")
 
-    demo = await _is_demo_mode()
-    code_match = (req.code == stored["code"]) or (demo and req.code == DEMO_CODE)
+    code_match = (req.code == stored["code"])
 
     if not code_match:
         await redis_state.set(f"otp:{phone}", json.dumps(stored), ttl=300)

@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1/settings", tags=["Settings"])
 # Valid setting keys and their defaults
 _DEFAULTS: dict[str, dict] = {
     "sms": {
-        "provider":     "demo",
+        "provider":     "",
         "api_key":      "",
         "workspace_id": "",
         "channel_id":   "",

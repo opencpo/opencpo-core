@@ -9,6 +9,7 @@ Endpoints (all under /api/v1/admin/auth):
   GET  /me      — verify token, return user profile
 """
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/api/v1/admin/auth", tags=["Admin Auth"])
 
 # ── JWT Config ───────────────────────────────────────────────────────────
 
-JWT_SECRET = config.api.api_key or "opencpo-admin-jwt-secret"
+JWT_SECRET = config.api.api_key or os.getenv("JWT_SECRET", "")
 JWT_ALGO = "HS256"
 JWT_TTL_HOURS = 24
 

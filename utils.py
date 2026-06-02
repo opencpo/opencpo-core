@@ -22,15 +22,14 @@ logger = logging.getLogger(__name__)
 
 async def send_sms(to: str, message: str) -> bool:
     """
-    Send SMS via the configured provider (Bird, Twilio, or demo).
+    Send SMS via the configured provider (Bird or Twilio).
 
     Provider config comes from the 'sms' setting in DB (cached 60s).
-    Falls back to demo mode (log only) when no provider is configured.
-    Returns True on success or in demo mode, False on provider error.
+    Returns True on success, False on provider error or if no provider is configured.
     """
     from state.settings import get_setting
     sms_cfg = await get_setting("sms")
-    provider = sms_cfg.get("provider", "demo")
+    provider = sms_cfg.get("provider", "")
 
     phone = _normalise_phone(to)
 
@@ -39,9 +38,9 @@ async def send_sms(to: str, message: str) -> bool:
     elif provider == "twilio":
         return await _send_twilio(phone, message, sms_cfg)
     else:
-        # Demo / not configured — log code for dev/test purposes
-        logger.info("SMS demo mode → %s: %s", phone[-4:], message)
-        return True
+        # No provider configured — SMS will not be delivered
+        logger.warning("No SMS provider configured — cannot send to %s", phone[-4:])
+        return False
 
 
 def _normalise_phone(phone: str) -> str:
@@ -57,9 +56,8 @@ async def _send_bird(phone: str, message: str, cfg: dict) -> bool:
     channel   = cfg.get("channel_id", "")
 
     if not all([api_key, workspace, channel]):
-        logger.warning("Bird SMS: missing api_key / workspace_id / channel_id — falling back to demo")
-        logger.info("SMS demo → %s: %s", phone[-4:], message)
-        return True
+        logger.warning("Bird SMS: missing api_key / workspace_id / channel_id")
+        return False
 
     url     = f"https://api.bird.com/workspaces/{workspace}/channels/{channel}/messages"
     payload = json.dumps({
@@ -99,9 +97,8 @@ async def _send_twilio(phone: str, message: str, cfg: dict) -> bool:
     from_number = cfg.get("sender", "")
 
     if not all([account_sid, auth_token, from_number]):
-        logger.warning("Twilio SMS: missing credentials — falling back to demo")
-        logger.info("SMS demo → %s: %s", phone[-4:], message)
-        return True
+        logger.warning("Twilio SMS: missing account_sid / auth_token / from_number")
+        return False
 
     import base64
     url     = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
