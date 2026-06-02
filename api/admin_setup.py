@@ -6,11 +6,13 @@ Once setup is complete, they return 403.
 
 Steps (all skippable — user can configure manually via files):
   1. Admin account  — email + password for the first admin user
-  2. Organization   — name, timezone, currency, public URL
-  3. SMTP           — email sending credentials for the comms module
-  4. PKI            — generate root CA + user CA
-  5. Pricing        — default tariff + pricing tiers
-  6. Features       — toggle OCPI, billing, EMS, etc.
+  2. Tailscale      — expose services on your tailnet
+  3. Organization   — name, timezone, currency, public URL
+  4. Branding       — colors, logo, charge app skin
+  5. SMTP           — email sending credentials for the comms module
+  6. PKI            — generate root CA + user CA
+  7. Pricing        — default tariff + pricing tiers
+  8. Features       — toggle OCPI, billing, EMS, etc.
 
 Endpoints:
   GET  /api/v1/admin/setup/status  — which steps are complete/skipped
@@ -37,14 +39,16 @@ router = APIRouter(prefix="/api/v1/admin/setup", tags=["Admin Setup"])
 # ── Setup state is tracked via settings table + feature_flags ────────────
 # Steps use ocpp.feature_flags to mark completion:
 #   setup.step.admin  = true | skipped
+#   setup.step.tailscale = true | skipped
 #   setup.step.org    = true | skipped
+#   setup.step.branding = true | skipped
 #   setup.step.smtp   = true | skipped
 #   setup.step.pki    = true | skipped
 #   setup.step.pricing = true | skipped
 #   setup.step.features = true | skipped
 # Complete when all steps are true or skipped.
 
-STEPS = ["admin", "org", "smtp", "pki", "pricing", "features"]
+STEPS = ["admin", "tailscale", "org", "branding", "smtp", "pki", "pricing", "features"]
 
 
 async def _admin_exists() -> bool:
@@ -87,6 +91,19 @@ async def _set_step_flag(key: str, value: str):
         )
 
 
+async def _save_setting(key: str, value: str):
+    """Save a generic key-value setting to pricing_config table."""
+    async with db.transaction() as conn:
+        await conn.execute(
+            """
+            INSERT INTO ocpp.pricing_config (key, value, description, updated_at)
+            VALUES ($1, 0, $2, NOW())
+            ON CONFLICT (key) DO UPDATE SET description = $2, updated_at = NOW()
+            """,
+            key, value,
+        )
+
+
 # ── Models ───────────────────────────────────────────────────────────────
 
 class StepAdminRequest(BaseModel):
@@ -95,11 +112,27 @@ class StepAdminRequest(BaseModel):
     name: str = "Admin"
 
 
+class StepTailscaleRequest(BaseModel):
+    enable_admin: bool = True
+    enable_ocpp16: bool = False
+    enable_ocpp201: bool = False
+    enable_api: bool = True
+    enable_charge_app: bool = False
+    tags: str = "tag:opencpo"
+
+
 class StepOrgRequest(BaseModel):
     name: str = "My CPO"
     timezone: str = "Europe/Amsterdam"
     currency: str = "EUR"
     public_url: str = "http://localhost"
+
+
+class StepBrandingRequest(BaseModel):
+    accent_color: str = "#00B0E4"
+    logo_url: str = ""
+    skin: str = "default"
+    charge_app_name: str = "OpenCPO Charge"
 
 
 class StepSmtpRequest(BaseModel):
@@ -187,6 +220,24 @@ async def setup_admin(body: StepAdminRequest):
     return {"ok": True, "step": "admin"}
 
 
+@router.post("/step/tailscale")
+async def setup_tailscale(body: StepTailscaleRequest):
+    """Save Tailscale configuration preferences."""
+    if not await _admin_exists():
+        raise HTTPException(status_code=403, detail="Create the admin account first")
+
+    await _save_setting("tailscale.enable_admin", str(body.enable_admin).lower())
+    await _save_setting("tailscale.enable_api", str(body.enable_api).lower())
+    await _save_setting("tailscale.enable_charge_app", str(body.enable_charge_app).lower())
+    await _save_setting("tailscale.enable_ocpp16", str(body.enable_ocpp16).lower())
+    await _save_setting("tailscale.enable_ocpp201", str(body.enable_ocpp201).lower())
+    await _save_setting("tailscale.tags", body.tags)
+    await _set_step_flag("setup.step.tailscale", "done")
+
+    logger.info(f"Tailscale config saved: admin={body.enable_admin}")
+    return {"ok": True, "step": "tailscale"}
+
+
 @router.post("/step/org")
 async def setup_org(body: StepOrgRequest):
     """Store organization settings."""
@@ -194,7 +245,6 @@ async def setup_org(body: StepOrgRequest):
         raise HTTPException(status_code=403, detail="Create the admin account first")
 
     async with db.transaction() as conn:
-        # Store org settings in pricing_config (generic key-value store)
         settings = [
             ("org.name", body.name),
             ("org.timezone", body.timezone),
@@ -202,18 +252,27 @@ async def setup_org(body: StepOrgRequest):
             ("org.public_url", body.public_url.rstrip("/")),
         ]
         for key, value in settings:
-            await conn.execute(
-                """
-                INSERT INTO ocpp.pricing_config (key, value, description, updated_at)
-                VALUES ($1, 0, $2, NOW())
-                ON CONFLICT (key) DO UPDATE SET description = $2, updated_at = NOW()
-                """,
-                key, value,
-            )
+            await _save_setting(key, value)
         await _set_step_flag("setup.step.org", "done")
 
     logger.info(f"Organization settings saved: {body.name}")
     return {"ok": True, "step": "org"}
+
+
+@router.post("/step/branding")
+async def setup_branding(body: StepBrandingRequest):
+    """Save branding and skin preferences."""
+    if not await _admin_exists():
+        raise HTTPException(status_code=403, detail="Create the admin account first")
+
+    await _save_setting("branding.accent_color", body.accent_color)
+    await _save_setting("branding.logo_url", body.logo_url)
+    await _save_setting("branding.skin", body.skin)
+    await _save_setting("branding.charge_app_name", body.charge_app_name)
+    await _set_step_flag("setup.step.branding", "done")
+
+    logger.info(f"Branding saved: skin={body.skin} accent={body.accent_color}")
+    return {"ok": True, "step": "branding"}
 
 
 @router.post("/step/smtp")
@@ -232,14 +291,7 @@ async def setup_smtp(body: StepSmtpRequest):
             ("smtp.use_tls", str(body.use_tls).lower()),
         ]
         for key, value in settings:
-            await conn.execute(
-                """
-                INSERT INTO ocpp.pricing_config (key, value, description, updated_at)
-                VALUES ($1, 0, $2, NOW())
-                ON CONFLICT (key) DO UPDATE SET description = $2, updated_at = NOW()
-                """,
-                key, value,
-            )
+            await _save_setting(key, value)
         await _set_step_flag("setup.step.smtp", "done")
 
     logger.info(f"SMTP configured: host={body.host} user={body.username}")
@@ -258,8 +310,6 @@ async def setup_pki(body: StepPkiRequest):
         logger.info("PKI initialized via setup wizard")
     except Exception as e:
         logger.warning(f"PKI initialization failed (skippable): {e}")
-        # PKI init is already attempted at startup; if it fails, it's
-        # usually because certs already exist — non-fatal.
 
     await _set_step_flag("setup.step.pki", "done")
     return {"ok": True, "step": "pki"}
@@ -272,12 +322,11 @@ async def setup_pricing(body: StepPricingRequest):
         raise HTTPException(status_code=403, detail="Create the admin account first")
 
     async with db.transaction() as conn:
-        # Set default pricing config
-        configs = [
+        config_entries = [
             ("default_currency", body.currency),
             ("default_margin", str(body.default_rate_kwh)),
         ]
-        for key, value in configs:
+        for key, value in config_entries:
             await conn.execute(
                 """
                 INSERT INTO ocpp.pricing_config (key, value, description, updated_at)
