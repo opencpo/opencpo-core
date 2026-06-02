@@ -20,6 +20,7 @@ cryptography>=44.0.0
 # Data validation
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
+email-validator>=2.0.0
 
 # HTTP client (for Tailscale API, OCPI, webhooks)
 httpx>=0.28.0
