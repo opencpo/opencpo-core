@@ -14,7 +14,7 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from state.postgres import db
@@ -128,11 +128,16 @@ async def login(body: LoginRequest):
 
 
 @router.get("/me")
-async def get_me(token: str):
+async def get_me(token: Optional[str] = None, authorization: Optional[str] = Header(None)):
     """Verify a JWT and return the current user profile.
 
     Pass token as: ?token=<jwt> or Authorization: Bearer <jwt>
     """
+    if not token and authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
     payload = verify_token(token)
 
     async with db.read() as conn:
