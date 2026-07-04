@@ -135,6 +135,14 @@ class EventsConfig:
 
 
 @dataclass
+class PushConfig:
+    @property
+    def service_url(self): return _env("PUSH_SERVICE_URL", "")
+    @property
+    def api_key(self): return _env("PUSH_INTERNAL_API_KEY", "")
+
+
+@dataclass
 class Config:
     db: DatabaseConfig = field(default_factory=DatabaseConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
@@ -143,6 +151,7 @@ class Config:
     pki: PKIConfig = field(default_factory=PKIConfig)
     tailscale: TailscaleConfig = field(default_factory=TailscaleConfig)
     events: EventsConfig = field(default_factory=EventsConfig)
+    push: PushConfig = field(default_factory=PushConfig)
 
     @property
     def log_level(self): return _env("LOG_LEVEL", "INFO")

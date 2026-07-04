@@ -90,7 +90,6 @@ from api.users import router as users_router
 from api.features import router as features_router
 from api.accounts import router as accounts_router, mgmt_router as driver_accounts_mgmt_router
 from api.favorites import router as favorites_router
-from api.push import router as push_router
 from api.vehicles import router as vehicles_router
 from api.profiles import router as profiles_router
 from api.pricing import router as pricing_router
@@ -135,7 +134,6 @@ app.include_router(favorites_router)
 app.include_router(public_router)
 app.include_router(public_auth_router)
 app.include_router(public_sessions_router)
-app.include_router(push_router)
 app.include_router(webhook_router)
 
 app.include_router(profiles_router, prefix="/api/v1/profiles", tags=["Charger Profiles"], dependencies=_mgmt)

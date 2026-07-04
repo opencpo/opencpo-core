@@ -1,9 +1,10 @@
-"""
-OCPP 1.6 session lifecycle — StartTransaction, StopTransaction, CDR generation.
-"""
+"""OCPP 1.6 session lifecycle — StartTransaction, StopTransaction, CDR generation."""
 import logging
 from decimal import Decimal, ROUND_HALF_UP
 
+import httpx
+
+from config import config
 from events.bus import EventBus
 from events.types import Event, EventType
 from state.postgres import db
@@ -11,7 +12,6 @@ from state.redis import redis_state
 from ocpp16.protocol import AuthorizationStatus
 from ocpp16.meter import session_energy
 from utils import parse_timestamp
-from api.push import send_push_for_session
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,18 @@ async def _notify_session_complete(
         body = f"{energy_kwh:.2f} kWh geladen — €{cost:.2f}".replace(".", ",")
         url = f"/receipt/{public_id}"
 
-        await send_push_for_session(public_id, title, body, url)
+        # Push notification via standalone push service
+        push_url = config.push.service_url
+        if push_url:
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    await client.post(
+                        f"{push_url}/api/v1/push/send",
+                        json={"session_id": public_id, "title": title, "body": body, "url": url},
+                        headers={"X-API-Key": config.push.api_key},
+                    )
+            except Exception as e:
+                logger.warning("Push service call failed: %s", e)
 
         # Receipt email — resolve email from session or driver account
         email = row["driver_email"]
